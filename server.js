@@ -77,6 +77,24 @@ const CUSTOMER_NAMES = [
 
 const CUSTOMER_FACES = ["👵", "👴", "🧓", "👩‍🦳", "👨‍🦳"];
 
+const CUSTOMER_PHRASES = [
+  "I'm ready for something delicious!",
+  "Morning! I'm a little peckish today.",
+  "Oh, everything looks wonderful here.",
+  "Just what the doctor ordered!",
+  "I've been looking forward to this.",
+  "My usual, please!",
+  "Do you have anything warm today?",
+  "Just a little something, please.",
+  "I'll have the special today.",
+  "This place is my favourite!",
+  "Something sweet would be lovely.",
+  "So happy to be out and about.",
+  "Whatever's freshest, please.",
+  "My, it smells wonderful in here.",
+  "A little treat before I head home.",
+];
+
 // ---------- Rooms ----------
 const rooms = new Map();
 
@@ -123,6 +141,7 @@ function publicState(room) {
       id: c.id,
       name: c.name,
       face: c.face,
+      phrase: c.phrase,
       orderId: c.orderId,
       status: c.status, // waiting_take | preparing | ready_deliver | left
     })),
@@ -168,11 +187,13 @@ function spawnCustomer(room) {
   const orderId = "o" + room.orderCounter;
   const name = CUSTOMER_NAMES[Math.floor(Math.random() * CUSTOMER_NAMES.length)];
   const face = CUSTOMER_FACES[Math.floor(Math.random() * CUSTOMER_FACES.length)];
+  const phrase = CUSTOMER_PHRASES[Math.floor(Math.random() * CUSTOMER_PHRASES.length)];
 
   const customer = {
     id: customerId,
     name,
     face,
+    phrase,
     orderId,
     status: "waiting_take",
   };
@@ -305,18 +326,35 @@ io.on("connection", (socket) => {
     broadcast(room);
   });
 
-  // Order Taker: accept a waiting customer's order, moving it into the kitchen queue
-  socket.on("takeOrder", ({ customerId }) => {
+  // Order Taker: write down the customer's order by picking from the menu.
+  // The server checks the picks match the customer's request. If they
+  // don't, it sends a gentle hint back and leaves the customer waiting.
+  socket.on("submitOrder", ({ customerId, foodId, drinkId }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
     const customer = findCustomer(room, customerId);
     if (!customer || customer.status !== "waiting_take") return;
     const order = findOrder(room, customer.orderId);
     if (!order) return;
+
+    const foodOk = foodId === order.food.id;
+    const drinkOk = drinkId === order.drink.id;
+    if (!foodOk || !drinkOk) {
+      io.to(socket.id).emit("hint", {
+        kind: "wrong_order",
+        customerName: customer.name,
+        wantFood: order.food.name,
+        wantDrink: order.drink.name,
+        badFood: !foodOk,
+        badDrink: !drinkOk,
+      });
+      return;
+    }
+
     customer.status = "preparing";
     order.status = "preparing";
     const player = room.players.get(socket.id);
-    if (player) player.lastTook = Date.now();
+    if (player) player.took = (player.took || 0) + 1;
     refreshStatuses(room);
     broadcast(room);
   });

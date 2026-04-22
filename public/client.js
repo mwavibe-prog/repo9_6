@@ -147,6 +147,13 @@
 
     if (state.started && $("#screen-game").classList.contains("active")) renderGame();
     if ($("#screen-tv").classList.contains("active")) renderTvScreen();
+
+    // Drop any local taker drafts for customers that have moved past the
+    // "waiting_take" state — keeps the menu panel clean on the next render.
+    for (const id of Object.keys(takerSelections)) {
+      const c = state.customers.find((x) => x.id === id);
+      if (!c || c.status !== "waiting_take") delete takerSelections[id];
+    }
   });
 
   socket.on("gameOver", (data) => {
@@ -171,6 +178,11 @@
       toast(`Not yet — next is: ${label}`);
     } else if (h.kind === "wrong_drink_step") {
       toast("Add the cup first, then pour the drink.");
+    } else if (h.kind === "wrong_order") {
+      const parts = [];
+      if (h.badFood)  parts.push(`wants ${h.wantFood}`);
+      if (h.badDrink) parts.push(`wants ${h.wantDrink}`);
+      toast(`${h.customerName} ${parts.join(" and ")}. Please check again.`);
     }
   });
 
@@ -228,7 +240,25 @@
     else if (myRole === "barista") renderBaristaStation();
   }
 
-  // Taker: lists every customer in the room with a clear action button
+  // Per-customer draft selections (local only — each taker has their own).
+  // Shape: { [customerId]: { food: "burger", drink: "coffee" } }
+  const takerSelections = {};
+
+  // Briefly flash a card with a celebration class when a guest is delivered.
+  // Stored here so re-renders don't steal the animation mid-flight.
+  const deliveredFlash = new Set();
+
+  function moodFor(customer, order, picks) {
+    if (customer.status === "delivered") return "🎉";
+    if (customer.status === "ready_deliver") return "😋";
+    if (customer.status === "preparing") return "⌛";
+    // Waiting to take. If the taker has picked the right items, the guest
+    // smiles — gentle feedback before they even tap "Send to kitchen".
+    const correct = picks && picks.food === order.food.id && picks.drink === order.drink.id;
+    return correct ? "😊" : "🤔";
+  }
+
+  // Taker: writes down each guest's order by tapping food + drink menus.
   function renderTakerStation() {
     const list = $("#customers-list");
     const customers = roomState.customers;
@@ -236,58 +266,111 @@
       list.innerHTML = `<p class="empty-note">No guests yet. Please wait a moment…</p>`;
       return;
     }
+
+    const menu = roomState.menu;
     list.innerHTML = "";
+
     for (const c of customers) {
       const order = roomState.orders.find((o) => o.id === c.orderId);
       if (!order) continue;
 
+      const picks = takerSelections[c.id] || {};
       const food = order.food;
       const drink = order.drink;
 
       const statusLabel = {
-        waiting_take: { text: "Waiting to order", cls: "waiting" },
-        preparing:    { text: "Kitchen is working on it", cls: "preparing" },
-        ready_deliver:{ text: "Ready to deliver!", cls: "ready" },
-        delivered:    { text: "Delivered — thank you!", cls: "delivered" },
+        waiting_take:  { text: "Ready to order",              cls: "waiting" },
+        preparing:     { text: "Kitchen is working on it",    cls: "preparing" },
+        ready_deliver: { text: "Food & drink ready!",         cls: "ready" },
+        delivered:     { text: "Delivered — thank you!",      cls: "delivered" },
       }[c.status] || { text: c.status, cls: "" };
 
-      // Progress pills
       const foodPill = `<span class="progress-pill ${order.foodDone ? "done" : ""}">${food.icon} ${escapeHtml(food.name)}${order.foodDone ? " ✓" : ""}</span>`;
       const drinkPill = `<span class="progress-pill ${order.drinkDone ? "done" : ""}">${drink.icon} ${escapeHtml(drink.name)}${order.drinkDone ? " ✓" : ""}</span>`;
 
-      // Action button
-      let action = "";
+      // Main action area — differs by status
+      let body = "";
       if (c.status === "waiting_take") {
-        action = `<button class="big-action primary" data-act="take" data-id="${c.id}">Take this order</button>`;
+        const foodBtns = Object.values(menu.foods).map((f) => `
+          <button class="menu-btn ${picks.food === f.id ? "picked" : ""}" data-kind="food" data-id="${f.id}">
+            <span class="ico" aria-hidden="true">${f.icon}</span>
+            <span>${escapeHtml(f.name)}</span>
+          </button>
+        `).join("");
+        const drinkBtns = Object.values(menu.drinks).map((d) => `
+          <button class="menu-btn ${picks.drink === d.id ? "picked" : ""}" data-kind="drink" data-id="${d.id}">
+            <span class="ico" aria-hidden="true">${d.icon}</span>
+            <span>${escapeHtml(d.name)}</span>
+          </button>
+        `).join("");
+        const canSend = !!(picks.food && picks.drink);
+        body = `
+          <div class="menu-section">
+            <div class="menu-title">Choose the food</div>
+            <div class="menu-grid">${foodBtns}</div>
+          </div>
+          <div class="menu-section">
+            <div class="menu-title">Choose the drink</div>
+            <div class="menu-grid">${drinkBtns}</div>
+          </div>
+          <button class="big-action primary send-btn" data-act="send" data-id="${c.id}" ${canSend ? "" : "disabled"}>
+            ${canSend ? "Send to kitchen" : "Pick a food and a drink"}
+          </button>
+        `;
       } else if (c.status === "ready_deliver") {
-        action = `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order</button>`;
+        body = `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order 🎉</button>`;
       } else if (c.status === "preparing") {
-        action = `<button class="big-action" disabled>In the kitchen…</button>`;
+        body = `<button class="big-action" disabled>⌛ Kitchen is working…</button>`;
       } else if (c.status === "delivered") {
-        action = `<button class="big-action" disabled>Delivered 🎉</button>`;
+        body = `<button class="big-action" disabled>Delivered — thank you!</button>`;
       }
 
       const card = document.createElement("div");
-      card.className = "customer-card";
+      card.className = "customer-card" + (deliveredFlash.has(c.id) ? " delivered-flash" : "");
+      card.dataset.customerId = c.id;
       card.innerHTML = `
         <div class="who">
           <div class="face" aria-hidden="true">${c.face}</div>
           <div class="name">${escapeHtml(c.name)}</div>
+          <div class="mood" aria-hidden="true">${moodFor(c, order, picks)}</div>
         </div>
+        ${c.phrase ? `<div class="speech">“${escapeHtml(c.phrase)}”</div>` : ""}
         <div class="order">Would like: <b>${food.icon} ${escapeHtml(food.name)}</b> and <b>${drink.icon} ${escapeHtml(drink.name)}</b></div>
         <div class="progress-row">${foodPill} ${drinkPill}</div>
         <div class="status ${statusLabel.cls}">${statusLabel.text}</div>
-        ${action}
+        ${body}
       `;
       list.appendChild(card);
     }
 
     list.onclick = (ev) => {
+      // Menu selection (food or drink)
+      const menuBtn = ev.target.closest("button.menu-btn");
+      if (menuBtn) {
+        const card = menuBtn.closest(".customer-card");
+        const cid = card.dataset.customerId;
+        const kind = menuBtn.dataset.kind;
+        const id = menuBtn.dataset.id;
+        const cur = takerSelections[cid] || {};
+        cur[kind] = cur[kind] === id ? null : id; // tap again to unselect
+        takerSelections[cid] = cur;
+        renderTakerStation();
+        return;
+      }
+      // Primary buttons
       const btn = ev.target.closest("button[data-act]");
       if (!btn) return;
       const id = btn.dataset.id;
-      if (btn.dataset.act === "take") socket.emit("takeOrder", { customerId: id });
-      if (btn.dataset.act === "deliver") socket.emit("deliver", { customerId: id });
+      if (btn.dataset.act === "send") {
+        const picks = takerSelections[id] || {};
+        if (!picks.food || !picks.drink) return;
+        socket.emit("submitOrder", { customerId: id, foodId: picks.food, drinkId: picks.drink });
+      }
+      if (btn.dataset.act === "deliver") {
+        deliveredFlash.add(id);
+        setTimeout(() => { deliveredFlash.delete(id); }, 1800);
+        socket.emit("deliver", { customerId: id });
+      }
     };
   }
 

@@ -304,7 +304,113 @@ button {
   margin-bottom: 8px;
 }
 .customer-card .face { font-size: 2.6rem; }
-.customer-card .name { font-size: 1.25rem; font-weight: 700; }
+.customer-card .name { font-size: 1.25rem; font-weight: 700; flex: 1; }
+.customer-card .mood {
+  font-size: 2rem;
+  line-height: 1;
+  padding: 4px 10px;
+  background: var(--chip);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  transition: transform 200ms ease;
+}
+
+/* Speech bubble used for the customer's friendly phrase */
+.customer-card .speech {
+  position: relative;
+  background: #f4fbff;
+  border: 2px solid #bfe0ef;
+  border-radius: 14px;
+  padding: 10px 14px;
+  margin: 4px 0 8px;
+  font-size: 1.05rem;
+  font-style: italic;
+  color: #1e3a4b;
+}
+.customer-card .speech::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 24px;
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-bottom: 10px solid #bfe0ef;
+}
+.customer-card .speech::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 26px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 8px solid #f4fbff;
+}
+
+/* Menu pickers used by the order taker */
+.menu-section { margin: 10px 0 4px; }
+.menu-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 6px 0;
+}
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (min-width: 480px) {
+  .menu-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.menu-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  min-height: 74px;
+  background: #fff;
+  border: 3px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 600;
+  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+}
+.menu-btn .ico { font-size: 1.8rem; line-height: 1; }
+.menu-btn:hover { background: #f5efe0; }
+.menu-btn:active { transform: scale(0.97); }
+.menu-btn.picked {
+  border-color: var(--primary);
+  background: #eaf2ff;
+  box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.2) inset;
+}
+.send-btn:disabled {
+  background: #c9d5e8 !important;
+  border-color: #c9d5e8 !important;
+  color: #ffffff !important;
+  cursor: not-allowed;
+}
+
+/* Celebration flash when a guest is delivered */
+@keyframes delivered-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(42, 143, 76, 0.6), var(--shadow); transform: scale(1); }
+  40%  { box-shadow: 0 0 0 16px rgba(42, 143, 76, 0.0), var(--shadow); transform: scale(1.02); }
+  100% { box-shadow: 0 0 0 0 rgba(42, 143, 76, 0.0), var(--shadow); transform: scale(1); }
+}
+.customer-card.delivered-flash {
+  animation: delivered-pulse 1.6s ease-out;
+  border-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .customer-card.delivered-flash { animation: none; }
+}
 .customer-card .order {
   background: var(--chip);
   border: 2px solid var(--line);
