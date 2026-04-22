@@ -1,0 +1,17 @@
+{
+  "name": "friendly-diner",
+  "version": "1.0.0",
+  "description": "A friendly multiplayer restaurant game designed for players 60+. Three roles working together: take orders, make food, make drinks.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

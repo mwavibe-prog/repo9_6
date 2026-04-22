@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Friendly Diner — play together</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ============ HOME SCREEN ============ -->
+<section id="screen-home" class="screen active">
+  <div class="card">
+    <h1>Friendly Diner</h1>
+    <p class="subtitle">A cooking game to play with friends and family.<br/>Up to 15 players. No rush. Have fun together.</p>
+
+    <label class="field">
+      <span>Your name</span>
+      <input id="name-input" type="text" maxlength="20" autocomplete="off" placeholder="Type your name" />
+    </label>
+
+    <div class="home-actions">
+      <button id="btn-create" class="big primary">Start a new game</button>
+
+      <div class="or">— or —</div>
+
+      <label class="field">
+        <span>Room code</span>
+        <input id="code-input" type="text" maxlength="4" autocomplete="off" placeholder="ABCD" />
+      </label>
+      <button id="btn-join" class="big">Join a game</button>
+    </div>
+
+    <p id="home-error" class="error-msg" aria-live="polite"></p>
+  </div>
+</section>
+
+<!-- ============ LOBBY SCREEN ============ -->
+<section id="screen-lobby" class="screen">
+  <div class="card">
+    <h2>Room code: <span id="lobby-code" class="code-badge">----</span></h2>
+    <p class="subtitle">Share this code with friends so they can join.</p>
+
+    <h3>Pick your job</h3>
+    <div class="role-picker">
+      <button class="role-btn" data-role="taker">
+        <span class="role-icon">📝</span>
+        <span class="role-name">Take Orders</span>
+        <span class="role-desc">Greet guests and deliver food</span>
+      </button>
+      <button class="role-btn" data-role="cook">
+        <span class="role-icon">🍳</span>
+        <span class="role-name">Cook Food</span>
+        <span class="role-desc">Build burgers, hot dogs, fries</span>
+      </button>
+      <button class="role-btn" data-role="barista">
+        <span class="role-icon">☕</span>
+        <span class="role-name">Make Drinks</span>
+        <span class="role-desc">Pour coffee, tea, juice, water</span>
+      </button>
+    </div>
+
+    <h3>Players in this room</h3>
+    <ul id="lobby-players" class="player-list"></ul>
+
+    <div class="lobby-actions">
+      <button id="btn-start" class="big primary" hidden>Start Game</button>
+      <p id="waiting-msg" class="subtitle">Waiting for the host to start…</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ GAME SCREEN ============ -->
+<section id="screen-game" class="screen">
+  <header class="game-header">
+    <div class="score-box">
+      <div class="score-label">Orders served</div>
+      <div id="score" class="score-value">0</div>
+    </div>
+    <div class="role-tabs">
+      <button class="tab-btn" data-role="taker">📝 Orders</button>
+      <button class="tab-btn" data-role="cook">🍳 Kitchen</button>
+      <button class="tab-btn" data-role="barista">☕ Drinks</button>
+    </div>
+    <button id="btn-end" class="end-btn" hidden>End game</button>
+  </header>
+
+  <!-- Order Taker station -->
+  <div id="station-taker" class="station">
+    <h2>At the counter</h2>
+    <div id="customers-list" class="customers-list">
+      <p class="empty-note">No guests yet. Please wait a moment…</p>
+    </div>
+  </div>
+
+  <!-- Cook station -->
+  <div id="station-cook" class="station" hidden>
+    <h2>Kitchen tickets</h2>
+    <div id="cook-list" class="tickets-list">
+      <p class="empty-note">No food orders right now.</p>
+    </div>
+  </div>
+
+  <!-- Barista station -->
+  <div id="station-barista" class="station" hidden>
+    <h2>Drink tickets</h2>
+    <div id="barista-list" class="tickets-list">
+      <p class="empty-note">No drink orders right now.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ GAME OVER SCREEN ============ -->
+<section id="screen-over" class="screen">
+  <div class="card">
+    <h1>Great job, team!</h1>
+    <p class="subtitle">You served <b id="over-score">0</b> happy guests.</p>
+    <h3>Your team</h3>
+    <ul id="over-players" class="player-list"></ul>
+    <button id="btn-back" class="big primary">Back to lobby</button>
+  </div>
+</section>
+
+<!-- Hint toast -->
+<div id="toast" class="toast" aria-live="polite"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
