@@ -457,77 +457,82 @@
     };
   }
 
-  // Cook: list of food tickets that still need work
+  // Cook: one ticket at a time, shown as a ring of ingredients around a
+  // central "plate" that displays the recipe being built.
   function renderCookStation() {
     const list = $("#cook-list");
-    const tickets = roomState.orders.filter((o) => !o.foodDone && o.status !== "delivered" && isCustomerActive(o));
-    if (tickets.length === 0) {
-      list.innerHTML = `<p class="empty-note">No food orders right now. Nice work!</p>`;
+    const order = roomState.orders.find((o) => !o.foodDone && o.status !== "delivered" && isCustomerActive(o));
+
+    if (!order) {
+      list.innerHTML = `<p class="empty-note">Waiting for the next order…</p>`;
       return;
     }
-    list.innerHTML = "";
-    for (const order of tickets) {
-      const customer = roomState.customers.find((c) => c.id === order.customerId);
-      const waitingToBeTaken = customer && customer.status === "waiting_take";
 
-      const recipeSteps = order.food.ingredients
-        .map((ing, i) => {
-          const label = INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
-          const done = i < order.foodProgress.length;
-          const next = i === order.foodProgress.length && !done;
-          return `<li class="${done ? "done" : ""} ${next ? "next" : ""}">${label.icon} ${escapeHtml(label.name)}${done ? " ✓" : ""}</li>`;
-        })
-        .join("");
-
-      // Distractor palette: every ingredient the kitchen has, shuffled by
-      // the server per-ticket. The cook must pick the correct ones for the
-      // recipe on the left, ignoring distractors like "sausage" on a burger.
-      const paletteIds = order.ingredientOrder || Object.keys(roomState.menu.ingredients || INGREDIENT_LABELS);
-      const palette = paletteIds
-        .map((ing) => {
-          const meta = (roomState.menu.ingredients && roomState.menu.ingredients[ing]) || INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
-          return `<button class="ingredient-btn" data-ing="${ing}" ${waitingToBeTaken ? "disabled" : ""}>
-                    <span class="ico" aria-hidden="true">${meta.icon}</span>
-                    <span>${escapeHtml(meta.name)}</span>
-                  </button>`;
-        })
-        .join("");
-
-      const ready = order.foodDone;
-      const guestTag = customer ? `for <b>${escapeHtml(customer.name)}</b>` : "";
-      const takenHint = waitingToBeTaken ? `<p class="status waiting">Waiting for a server to take this order.</p>` : "";
-
-      const card = document.createElement("div");
-      card.className = "ticket-card";
-      card.innerHTML = `
-        <h4>${order.food.icon} ${escapeHtml(order.food.name)}</h4>
-        <div class="for">${guestTag}</div>
-        ${takenHint}
-        <div class="recipe"><ol>${recipeSteps}</ol></div>
-        <div class="ingredient-palette">${palette}</div>
-        <div class="ticket-actions">
-          <button class="undo" data-act="undo" data-id="${order.id}" ${order.foodProgress.length === 0 || waitingToBeTaken ? "disabled" : ""}>Undo last</button>
-          <button class="serve" data-act="serve-food" data-id="${order.id}" disabled>${ready ? "Served ✓" : "Keep going…"}</button>
-        </div>
-      `;
-
-      // Wire ingredient buttons
-      card.querySelectorAll(".ingredient-btn").forEach((b) => {
-        b.addEventListener("click", () => {
-          if (waitingToBeTaken) return;
-          sfx("ingredient");
-          socket.emit("addIngredient", { orderId: order.id, ingredient: b.dataset.ing });
-        });
-      });
-      card.querySelectorAll("button[data-act='undo']").forEach((b) => {
-        b.addEventListener("click", () => {
-          sfx("tap");
-          socket.emit("undoIngredient", { orderId: order.id });
-        });
-      });
-
-      list.appendChild(card);
+    const customer = roomState.customers.find((c) => c.id === order.customerId);
+    const waitingToBeTaken = customer && customer.status === "waiting_take";
+    if (waitingToBeTaken) {
+      list.innerHTML = `<p class="empty-note">⏳ The server is still taking the order…</p>`;
+      return;
     }
+
+    const menuIngredients = (roomState.menu && roomState.menu.ingredients) || INGREDIENT_LABELS;
+    const paletteIds = order.ingredientOrder || Object.keys(menuIngredients);
+    const n = paletteIds.length;
+
+    // Recipe list shown inside the central plate
+    const recipeSteps = order.food.ingredients
+      .map((ing, i) => {
+        const meta = menuIngredients[ing] || INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
+        const done = i < order.foodProgress.length;
+        const next = i === order.foodProgress.length && !done;
+        return `<li class="${done ? "done" : ""} ${next ? "next" : ""}">${meta.icon} ${escapeHtml(meta.name)}${done ? " ✓" : ""}</li>`;
+      })
+      .join("");
+
+    // One button per ingredient, positioned on a circle around the plate
+    const ringBtns = paletteIds.map((ing, i) => {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2; // start at top, clockwise
+      const rx = 50 + Math.cos(angle) * 40; // percent of container width
+      const ry = 50 + Math.sin(angle) * 40;
+      const meta = menuIngredients[ing] || INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
+      const recipeNeeds = order.food.ingredients.includes(ing);
+      return `
+        <button class="ring-btn ${recipeNeeds ? "" : "ring-distractor"}"
+                data-ing="${ing}"
+                style="left:${rx}%; top:${ry}%;">
+          <span class="ring-ico" aria-hidden="true">${meta.icon}</span>
+          <span class="ring-name">${escapeHtml(meta.name)}</span>
+        </button>`;
+    }).join("");
+
+    const guestTag = customer ? `for <b>${escapeHtml(customer.name)}</b>` : "";
+    const canUndo = order.foodProgress.length > 0;
+
+    list.innerHTML = `
+      <div class="cook-arena">
+        <div class="cook-ring">${ringBtns}</div>
+        <div class="cook-plate">
+          <div class="cook-dish" aria-hidden="true">${order.food.icon}</div>
+          <div class="cook-dish-name">${escapeHtml(order.food.name)}</div>
+          <div class="cook-for">${guestTag}</div>
+          <ol class="cook-recipe">${recipeSteps}</ol>
+          <button class="cook-undo" data-act="undo" ${canUndo ? "" : "disabled"}>↶ Undo last</button>
+        </div>
+      </div>
+    `;
+
+    list.querySelectorAll(".ring-btn").forEach((b) => {
+      b.addEventListener("click", () => {
+        sfx("ingredient");
+        socket.emit("addIngredient", { orderId: order.id, ingredient: b.dataset.ing });
+      });
+    });
+    list.querySelectorAll(".cook-undo").forEach((b) => {
+      b.addEventListener("click", () => {
+        sfx("tap");
+        socket.emit("undoIngredient", { orderId: order.id });
+      });
+    });
   }
 
   // Barista: two-step drinks (cup, then pour)

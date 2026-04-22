@@ -141,12 +141,11 @@ function newRoom(code, hostSocketId) {
     hostId: hostSocketId,
     started: false,
     players: new Map(), // socketId -> player
-    customers: [], // queued + seated customers
-    orders: [], // orders currently in progress
+    customers: [], // at most one active at a time
+    orders: [], // the single in-flight order, if any
     completed: 0,
     customerCounter: 0,
     orderCounter: 0,
-    spawnTimer: null,
   };
 }
 
@@ -200,8 +199,10 @@ function pickRandom(obj) {
 
 function spawnCustomer(room) {
   if (!room.started) return;
-  // Gentle cap: no more than 5 waiting customers at once (keeps pace relaxed for elderly players)
-  if (room.customers.filter((c) => c.status !== "delivered" && c.status !== "left").length >= 5) return;
+  // Strictly one guest at a time — the next order only arrives after
+  // the current one has been delivered and cleared.
+  const active = room.customers.filter((c) => c.status !== "delivered" && c.status !== "left");
+  if (active.length >= 1) return;
 
   room.customerCounter += 1;
   room.orderCounter += 1;
@@ -253,18 +254,12 @@ function spawnCustomer(room) {
 }
 
 function startSpawning(room) {
-  if (room.spawnTimer) return;
-  // Spawn first customer quickly so the game feels alive
+  // Single-threaded game loop: send one guest to start; the next one is
+  // spawned only after a delivery completes (see the deliver handler).
   spawnCustomer(room);
-  room.spawnTimer = setInterval(() => spawnCustomer(room), 12000); // relaxed pace
 }
 
-function stopSpawning(room) {
-  if (room.spawnTimer) {
-    clearInterval(room.spawnTimer);
-    room.spawnTimer = null;
-  }
-}
+function stopSpawning(_room) { /* no-op — kept for the endGame call site */ }
 
 function findOrder(room, orderId) {
   return room.orders.find((o) => o.id === orderId);
@@ -488,13 +483,18 @@ io.on("connection", (socket) => {
     room.completed += 1;
     const player = room.players.get(socket.id);
     if (player) player.served = (player.served || 0) + 1;
-    // Remove the customer & order after a short moment so players see the "delivered" state
+    // Let players see the "delivered" state for a moment, then clear the
+    // board and bring in the next guest (strict one-at-a-time flow).
     setTimeout(() => {
       const r = rooms.get(currentRoomCode);
       if (!r) return;
       r.customers = r.customers.filter((c) => c.id !== customer.id);
       r.orders = r.orders.filter((o) => o.id !== order.id);
-      broadcast(r);
+      if (r.started) {
+        spawnCustomer(r); // broadcasts as part of spawn
+      } else {
+        broadcast(r);
+      }
     }, 2000);
     broadcast(room);
   });

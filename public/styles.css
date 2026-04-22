@@ -909,6 +909,139 @@ button:focus-visible {
   .tv-live-score, .tv-live-room { justify-self: center; }
 }
 
+/* ---------- Cook "arena": one order, ingredients in a ring ---------- */
+#cook-list { display: block; }   /* override the grid layout from tickets-list */
+
+.cook-arena {
+  position: relative;
+  width: 100%;
+  max-width: 680px;
+  aspect-ratio: 1 / 1;
+  margin: 8px auto 20px;
+  /* Wooden countertop vibe */
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,255,255,0.55), transparent 60%),
+    radial-gradient(circle at 50% 50%, #e9dcbf 0%, #d5c397 55%, #b9a070 100%);
+  border: 4px solid #9c8152;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 8px 22px rgba(0,0,0,0.15),
+    0 6px 18px rgba(0,0,0,0.18);
+}
+.cook-ring {
+  position: absolute;
+  inset: 0;
+}
+
+.ring-btn {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: clamp(62px, 15%, 110px);
+  height: clamp(62px, 15%, 110px);
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.ring-btn:hover {
+  background: #fff8e1;
+  transform: translate(-50%, -50%) scale(1.08);
+  box-shadow: 0 6px 14px rgba(0,0,0,0.2);
+}
+.ring-btn:active {
+  transform: translate(-50%, -50%) scale(0.95);
+}
+.ring-btn:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+.ring-ico { font-size: clamp(1.6rem, 3.6vw, 2.4rem); line-height: 1; }
+.ring-name {
+  font-size: clamp(0.65rem, 1.4vw, 0.9rem);
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.1;
+}
+
+/* Central "plate" with the recipe */
+.cook-plate {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 46%;
+  aspect-ratio: 1 / 1;
+  background:
+    radial-gradient(circle at 35% 30%, #ffffff 0%, #f4efe0 55%, #e7dfca 100%);
+  border: 5px solid #ffffff;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 3px #cbbe98,
+    0 6px 14px rgba(0,0,0,0.22);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8% 6% 4%;
+  text-align: center;
+  overflow: hidden;
+}
+.cook-dish { font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1; }
+.cook-dish-name {
+  font-size: clamp(0.95rem, 1.6vw, 1.2rem);
+  font-weight: 800;
+  margin-top: 2px;
+}
+.cook-for {
+  font-size: clamp(0.7rem, 1.2vw, 0.95rem);
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.cook-recipe {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 6px;
+  font-size: clamp(0.72rem, 1.2vw, 0.95rem);
+  max-height: 40%;
+  overflow: auto;
+  width: 100%;
+}
+.cook-recipe li {
+  padding: 1px 0;
+  line-height: 1.15;
+}
+.cook-recipe li.done { color: var(--accent); text-decoration: line-through; }
+.cook-recipe li.next { font-weight: 900; color: var(--primary); }
+
+.cook-undo {
+  border: 2px solid var(--warn);
+  background: #fff;
+  color: var(--warn);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: clamp(0.75rem, 1.2vw, 0.95rem);
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.cook-undo:hover:not(:disabled) { background: #fff3e6; }
+.cook-undo:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Very small screens: scale radius inward so items don't overflow */
+@media (max-width: 420px) {
+  .cook-plate { width: 52%; }
+}
+
 /* ---------- Floating audio controls ---------- */
 .audio-controls {
   position: fixed;
