@@ -507,16 +507,26 @@
 
     const guestTag = customer ? `for <b>${escapeHtml(customer.name)}</b>` : "";
     const canUndo = order.foodProgress.length > 0;
+    const doneCount = order.foodProgress.length;
+    const totalCount = order.food.ingredients.length;
 
     list.innerHTML = `
+      <div class="cook-recipe-card">
+        <div class="cook-recipe-head">
+          <span class="cook-dish" aria-hidden="true">${order.food.icon}</span>
+          <div class="cook-recipe-titles">
+            <div class="cook-dish-name">${escapeHtml(order.food.name)}</div>
+            <div class="cook-for">${guestTag}</div>
+          </div>
+          <button class="cook-undo" data-act="undo" ${canUndo ? "" : "disabled"}>↶ Undo last</button>
+        </div>
+        <ol class="cook-recipe">${recipeSteps}</ol>
+      </div>
       <div class="cook-arena">
         <div class="cook-ring">${ringBtns}</div>
         <div class="cook-plate">
-          <div class="cook-dish" aria-hidden="true">${order.food.icon}</div>
-          <div class="cook-dish-name">${escapeHtml(order.food.name)}</div>
-          <div class="cook-for">${guestTag}</div>
-          <ol class="cook-recipe">${recipeSteps}</ol>
-          <button class="cook-undo" data-act="undo" ${canUndo ? "" : "disabled"}>↶ Undo last</button>
+          <div class="cook-plate-dish" aria-hidden="true">${order.food.icon}</div>
+          <div class="cook-plate-progress">${doneCount} of ${totalCount}</div>
         </div>
       </div>
     `;
