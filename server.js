@@ -67,7 +67,30 @@ const MENU = {
     juice: { id: "juice", name: "Juice", icon: "🧃", needsCup: true },
     water: { id: "water", name: "Water", icon: "💧", needsCup: true },
   },
+  // All ingredients that the cook's palette might display, including ones
+  // that don't belong in any particular recipe — those act as distractors.
+  ingredients: {
+    bottom_bun: { id: "bottom_bun", name: "Bottom Bun", icon: "🍞" },
+    top_bun:    { id: "top_bun",    name: "Top Bun",    icon: "🥖" },
+    patty:      { id: "patty",      name: "Patty",      icon: "🥩" },
+    cheese:     { id: "cheese",     name: "Cheese",     icon: "🧀" },
+    lettuce:    { id: "lettuce",    name: "Lettuce",    icon: "🥬" },
+    tomato:     { id: "tomato",     name: "Tomato",     icon: "🍅" },
+    sausage:    { id: "sausage",    name: "Sausage",    icon: "🌭" },
+    basket:     { id: "basket",     name: "Basket",     icon: "🧺" },
+    potato:     { id: "potato",     name: "Potato",     icon: "🥔" },
+    salt:       { id: "salt",       name: "Salt",       icon: "🧂" },
+  },
 };
+
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
 const CUSTOMER_NAMES = [
   "Margaret", "Harold", "Beatrice", "Raymond", "Dorothy", "Walter",
@@ -144,6 +167,8 @@ function publicState(room) {
       phrase: c.phrase,
       orderId: c.orderId,
       status: c.status, // waiting_take | preparing | ready_deliver | left
+      foodOrder: c.foodOrder,
+      drinkOrder: c.drinkOrder,
     })),
     orders: room.orders.map((o) => ({
       id: o.id,
@@ -152,6 +177,7 @@ function publicState(room) {
       foodProgress: o.foodProgress,
       foodDone: o.foodDone,
       foodClaimedBy: o.foodClaimedBy,
+      ingredientOrder: o.ingredientOrder,
       drink: o.drink,
       drinkProgress: o.drinkProgress,
       drinkDone: o.drinkDone,
@@ -189,6 +215,12 @@ function spawnCustomer(room) {
   const face = CUSTOMER_FACES[Math.floor(Math.random() * CUSTOMER_FACES.length)];
   const phrase = CUSTOMER_PHRASES[Math.floor(Math.random() * CUSTOMER_PHRASES.length)];
 
+  // Distractor layout: each customer gets their own shuffled menu + palette
+  // so tapping isn't just muscle-memory position tapping.
+  const foodOrder = shuffled(Object.keys(MENU.foods));
+  const drinkOrder = shuffled(Object.keys(MENU.drinks));
+  const ingredientOrder = shuffled(Object.keys(MENU.ingredients));
+
   const customer = {
     id: customerId,
     name,
@@ -196,6 +228,8 @@ function spawnCustomer(room) {
     phrase,
     orderId,
     status: "waiting_take",
+    foodOrder,
+    drinkOrder,
   };
 
   const order = {
@@ -205,6 +239,7 @@ function spawnCustomer(room) {
     foodProgress: [], // list of ingredient ids added so far (in order required)
     foodDone: false,
     foodClaimedBy: null,
+    ingredientOrder, // layout of all ingredients in the cook's palette
     drink: { id: drink.id, name: drink.name, icon: drink.icon },
     drinkProgress: { cup: false, drink: false }, // two-step drink
     drinkDone: false,
@@ -409,15 +444,25 @@ io.on("connection", (socket) => {
     broadcast(room);
   });
 
-  // Barista: add cup, then pour drink. Steps are ordered.
-  socket.on("drinkStep", ({ orderId, step }) => {
+  // Barista: add cup, then pour drink. The "pour" step now includes a
+  // drinkId and must match the order, so distractor drink buttons can't
+  // be tapped blindly.
+  socket.on("drinkStep", ({ orderId, step, drinkId }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
     const order = findOrder(room, orderId);
     if (!order || order.drinkDone) return;
+
     if (step === "cup" && !order.drinkProgress.cup) {
       order.drinkProgress.cup = true;
     } else if (step === "pour" && order.drinkProgress.cup && !order.drinkProgress.drink) {
+      if (drinkId !== order.drink.id) {
+        io.to(socket.id).emit("hint", {
+          kind: "wrong_drink",
+          wantDrink: order.drink.name,
+        });
+        return;
+      }
       order.drinkProgress.drink = true;
     } else {
       io.to(socket.id).emit("hint", { kind: "wrong_drink_step" });

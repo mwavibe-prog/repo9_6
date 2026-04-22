@@ -36,6 +36,20 @@ html, body {
   line-height: 1.45;
 }
 
+/* Warm tablecloth-ish background. Two soft radial washes for depth plus a
+   gentle checker pattern. Stays well below the text contrast threshold. */
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 20% -10%, rgba(255, 212, 128, 0.25), transparent 55%),
+    radial-gradient(circle at 110% 120%, rgba(76, 197, 238, 0.16), transparent 55%),
+    linear-gradient(45deg, rgba(255,255,255,0.0) 48%, rgba(160,130,90,0.07) 50%, rgba(255,255,255,0.0) 52%),
+    linear-gradient(-45deg, rgba(255,255,255,0.0) 48%, rgba(160,130,90,0.05) 50%, rgba(255,255,255,0.0) 52%);
+  background-size: auto, auto, 46px 46px, 46px 46px;
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
 h1 { font-size: 2.4rem; margin: 0 0 0.5rem; }
 h2 { font-size: 1.8rem; margin: 1rem 0 0.5rem; }
 h3 { font-size: 1.4rem; margin: 1.2rem 0 0.6rem; }
@@ -108,11 +122,18 @@ button {
 }
 
 .big.primary {
-  background: var(--primary);
+  background: linear-gradient(180deg, #3d86f1 0%, var(--primary) 55%, #174fba 100%);
   color: var(--primary-ink);
   border-color: var(--primary);
+  box-shadow: 0 3px 0 #103f8f, 0 4px 12px rgba(31, 111, 235, 0.25);
 }
-.big.primary:hover { background: #175ccc; }
+.big.primary:hover {
+  filter: brightness(1.04);
+}
+.big.primary:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 #103f8f, 0 2px 6px rgba(31, 111, 235, 0.25);
+}
 
 .or {
   text-align: center;
@@ -232,7 +253,25 @@ button {
   min-width: 150px;
 }
 .score-label { font-size: 0.9rem; color: var(--muted); }
-.score-value { font-size: 2rem; font-weight: 800; color: var(--accent); }
+.score-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--accent);
+  display: inline-block;
+  transition: color 150ms ease;
+}
+@keyframes score-pulse {
+  0%   { transform: scale(1);    color: var(--accent); }
+  35%  { transform: scale(1.35); color: #f7a800; text-shadow: 0 0 12px rgba(247, 168, 0, 0.8); }
+  100% { transform: scale(1);    color: var(--accent); }
+}
+.score-value.pulse {
+  animation: score-pulse 700ms cubic-bezier(.2,.9,.3,1);
+}
+.tv-live-score-value.pulse { animation: score-pulse 700ms cubic-bezier(.2,.9,.3,1); }
+@media (prefers-reduced-motion: reduce) {
+  .score-value.pulse, .tv-live-score-value.pulse { animation: none; }
+}
 
 .role-tabs {
   display: flex;
@@ -473,6 +512,12 @@ button {
 }
 @media (min-width: 520px) {
   .ingredient-palette, .drink-palette { grid-template-columns: repeat(3, 1fr); }
+}
+.drink-palette.pour-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 520px) {
+  .drink-palette.pour-grid { grid-template-columns: repeat(4, 1fr); }
 }
 .ingredient-btn, .drink-step-btn {
   padding: 14px 8px;
@@ -862,6 +907,38 @@ button:focus-visible {
 @media (max-width: 720px) {
   .tv-live-top { grid-template-columns: 1fr; }
   .tv-live-score, .tv-live-room { justify-self: center; }
+}
+
+/* ---------- Floating audio controls ---------- */
+.audio-controls {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 30;
+}
+.audio-controls button {
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  min-height: 44px;
+}
+.audio-controls button:hover { background: #fff8e1; }
+.audio-controls button.off {
+  background: #eceef3;
+  color: var(--muted);
+  border-color: #cfd4de;
+}
+.audio-controls button:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Reduce motion preference */

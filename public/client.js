@@ -26,6 +26,9 @@
     barista: "☕ Make Drinks",
   };
 
+  // Tiny guard so SFX calls never break the UI if audio.js failed to load.
+  const sfx = (name) => { try { window.Audio && window.Audio.sfx(name); } catch (_) {} };
+
   // ---------- State ----------
   let myId = null;
   let myName = "";
@@ -129,8 +132,33 @@
     showScreen("screen-lobby");
   });
 
+  // ---------- Sound/music toggle buttons ----------
+  function refreshAudioButtons() {
+    if (!window.Audio) return;
+    const s = $("#btn-sound");
+    const m = $("#btn-music");
+    s.textContent = window.Audio.on ? "🔔 Sound on" : "🔕 Sound off";
+    s.classList.toggle("off", !window.Audio.on);
+    m.textContent = window.Audio.music ? "🎵 Music on" : "🎶 Music off";
+    m.classList.toggle("off", !window.Audio.music);
+  }
+  $("#btn-sound").addEventListener("click", () => {
+    if (!window.Audio) return;
+    window.Audio.setMaster(!window.Audio.on);
+    refreshAudioButtons();
+  });
+  $("#btn-music").addEventListener("click", () => {
+    if (!window.Audio) return;
+    window.Audio.setMusic(!window.Audio.music);
+    refreshAudioButtons();
+  });
+  refreshAudioButtons();
+
   // ---------- Socket events ----------
   socket.on("connect", () => { myId = socket.id; });
+
+  // Remember what state we saw last so we can fire SFX on transitions.
+  let prevSnapshot = { customers: {}, orders: {}, completed: 0, started: false };
 
   socket.on("state", (state) => {
     roomState = state;
@@ -145,6 +173,40 @@
       showScreen("screen-game");
     }
 
+    // Mood music starts when the game begins (first transition to started).
+    if (state.started && !prevSnapshot.started) {
+      if (window.Audio && window.Audio.music) window.Audio.startMusic();
+    }
+    if (!state.started && prevSnapshot.started) {
+      if (window.Audio) window.Audio.stopMusic();
+    }
+
+    // SFX based on state diffs (new customer, order ready, score up)
+    const custMap = {};
+    for (const c of state.customers) custMap[c.id] = c;
+    const orderMap = {};
+    for (const o of state.orders) orderMap[o.id] = o;
+    for (const c of state.customers) {
+      if (!prevSnapshot.customers[c.id] && c.status === "waiting_take") {
+        sfx("newCustomer");
+      } else {
+        const prev = prevSnapshot.customers[c.id];
+        if (prev && prev.status !== "ready_deliver" && c.status === "ready_deliver") {
+          sfx("ready");
+        }
+      }
+    }
+    if (state.completed > prevSnapshot.completed) {
+      // Pulse the on-screen score counter
+      flashScorePulse();
+    }
+    prevSnapshot = {
+      started: state.started,
+      completed: state.completed,
+      customers: custMap,
+      orders: orderMap,
+    };
+
     if (state.started && $("#screen-game").classList.contains("active")) renderGame();
     if ($("#screen-tv").classList.contains("active")) renderTvScreen();
 
@@ -155,6 +217,17 @@
       if (!c || c.status !== "waiting_take") delete takerSelections[id];
     }
   });
+
+  function flashScorePulse() {
+    ["#score", "#tv-live-score"].forEach((sel) => {
+      const el = $(sel);
+      if (!el) return;
+      el.classList.remove("pulse");
+      // force reflow so the animation can re-trigger
+      void el.offsetWidth;
+      el.classList.add("pulse");
+    });
+  }
 
   socket.on("gameOver", (data) => {
     $("#over-score").textContent = data.completed;
@@ -173,11 +246,14 @@
   });
 
   socket.on("hint", (h) => {
+    sfx("wrong");
     if (h.kind === "wrong_ingredient") {
       const label = (INGREDIENT_LABELS[h.expected] && INGREDIENT_LABELS[h.expected].name) || h.expected;
       toast(`Not yet — next is: ${label}`);
     } else if (h.kind === "wrong_drink_step") {
       toast("Add the cup first, then pour the drink.");
+    } else if (h.kind === "wrong_drink") {
+      toast(`This guest wanted ${h.wantDrink}. Try another pour.`);
     } else if (h.kind === "wrong_order") {
       const parts = [];
       if (h.badFood)  parts.push(`wants ${h.wantFood}`);
@@ -291,13 +367,17 @@
       // Main action area — differs by status
       let body = "";
       if (c.status === "waiting_take") {
-        const foodBtns = Object.values(menu.foods).map((f) => `
+        // Each guest's menu order is shuffled by the server so the taker
+        // has to actually look at icons, not tap from muscle memory.
+        const foodKeys = c.foodOrder || Object.keys(menu.foods);
+        const drinkKeys = c.drinkOrder || Object.keys(menu.drinks);
+        const foodBtns = foodKeys.map((k) => menu.foods[k]).filter(Boolean).map((f) => `
           <button class="menu-btn ${picks.food === f.id ? "picked" : ""}" data-kind="food" data-id="${f.id}">
             <span class="ico" aria-hidden="true">${f.icon}</span>
             <span>${escapeHtml(f.name)}</span>
           </button>
         `).join("");
-        const drinkBtns = Object.values(menu.drinks).map((d) => `
+        const drinkBtns = drinkKeys.map((k) => menu.drinks[k]).filter(Boolean).map((d) => `
           <button class="menu-btn ${picks.drink === d.id ? "picked" : ""}" data-kind="drink" data-id="${d.id}">
             <span class="ico" aria-hidden="true">${d.icon}</span>
             <span>${escapeHtml(d.name)}</span>
@@ -354,6 +434,7 @@
         const cur = takerSelections[cid] || {};
         cur[kind] = cur[kind] === id ? null : id; // tap again to unselect
         takerSelections[cid] = cur;
+        sfx("pick");
         renderTakerStation();
         return;
       }
@@ -364,11 +445,13 @@
       if (btn.dataset.act === "send") {
         const picks = takerSelections[id] || {};
         if (!picks.food || !picks.drink) return;
+        sfx("orderSent");
         socket.emit("submitOrder", { customerId: id, foodId: picks.food, drinkId: picks.drink });
       }
       if (btn.dataset.act === "deliver") {
         deliveredFlash.add(id);
         setTimeout(() => { deliveredFlash.delete(id); }, 1800);
+        sfx("deliver");
         socket.emit("deliver", { customerId: id });
       }
     };
@@ -396,14 +479,16 @@
         })
         .join("");
 
-      // Ingredient palette — only the ingredients needed for this food
-      const palette = order.food.ingredients
-        .filter((ing, i, arr) => arr.indexOf(ing) === i) // dedupe
+      // Distractor palette: every ingredient the kitchen has, shuffled by
+      // the server per-ticket. The cook must pick the correct ones for the
+      // recipe on the left, ignoring distractors like "sausage" on a burger.
+      const paletteIds = order.ingredientOrder || Object.keys(roomState.menu.ingredients || INGREDIENT_LABELS);
+      const palette = paletteIds
         .map((ing) => {
-          const label = INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
+          const meta = (roomState.menu.ingredients && roomState.menu.ingredients[ing]) || INGREDIENT_LABELS[ing] || { name: ing, icon: "•" };
           return `<button class="ingredient-btn" data-ing="${ing}" ${waitingToBeTaken ? "disabled" : ""}>
-                    <span class="ico" aria-hidden="true">${label.icon}</span>
-                    <span>${escapeHtml(label.name)}</span>
+                    <span class="ico" aria-hidden="true">${meta.icon}</span>
+                    <span>${escapeHtml(meta.name)}</span>
                   </button>`;
         })
         .join("");
@@ -430,11 +515,15 @@
       card.querySelectorAll(".ingredient-btn").forEach((b) => {
         b.addEventListener("click", () => {
           if (waitingToBeTaken) return;
+          sfx("ingredient");
           socket.emit("addIngredient", { orderId: order.id, ingredient: b.dataset.ing });
         });
       });
       card.querySelectorAll("button[data-act='undo']").forEach((b) => {
-        b.addEventListener("click", () => socket.emit("undoIngredient", { orderId: order.id }));
+        b.addEventListener("click", () => {
+          sfx("tap");
+          socket.emit("undoIngredient", { orderId: order.id });
+        });
       });
 
       list.appendChild(card);
@@ -466,6 +555,17 @@
       const takenHint = waitingToBeTaken ? `<p class="status waiting">Waiting for a server to take this order.</p>` : "";
       const guestTag = customer ? `for <b>${escapeHtml(customer.name)}</b>` : "";
 
+      // Distractor pour: all 4 drinks as options. Server validates; wrong
+      // pour gets a gentle hint instead of a silent no-op.
+      const drinks = roomState.menu.drinks;
+      const pourBtns = Object.values(drinks).map((d) => `
+        <button class="drink-step-btn pour-btn" data-step="pour" data-drink="${d.id}"
+          ${!cupDone || drinkDone || waitingToBeTaken ? "disabled" : ""}>
+          <span class="ico" aria-hidden="true">${d.icon}</span>
+          <span>Pour ${escapeHtml(d.name)}</span>
+        </button>
+      `).join("");
+
       const card = document.createElement("div");
       card.className = "ticket-card";
       card.innerHTML = `
@@ -474,20 +574,24 @@
         ${takenHint}
         <div class="recipe">${steps}</div>
         <div class="drink-palette">
-          <button class="drink-step-btn" data-step="cup" ${cupDone || waitingToBeTaken ? "disabled" : ""}>
+          <button class="drink-step-btn cup-btn" data-step="cup" ${cupDone || waitingToBeTaken ? "disabled" : ""}>
             <span class="ico" aria-hidden="true">🥤</span>
             <span>Get a cup</span>
           </button>
-          <button class="drink-step-btn" data-step="pour" ${!cupDone || drinkDone || waitingToBeTaken ? "disabled" : ""}>
-            <span class="ico" aria-hidden="true">${order.drink.icon}</span>
-            <span>Pour ${escapeHtml(order.drink.name)}</span>
-          </button>
+        </div>
+        <div class="menu-title" style="margin-top:10px;">Then pour the right drink</div>
+        <div class="drink-palette pour-grid">
+          ${pourBtns}
         </div>
       `;
 
       card.querySelectorAll(".drink-step-btn").forEach((b) => {
         b.addEventListener("click", () => {
-          socket.emit("drinkStep", { orderId: order.id, step: b.dataset.step });
+          const step = b.dataset.step;
+          const payload = { orderId: order.id, step };
+          if (step === "pour") payload.drinkId = b.dataset.drink;
+          if (step === "cup") sfx("cup"); else sfx("pour");
+          socket.emit("drinkStep", payload);
         });
       });
 

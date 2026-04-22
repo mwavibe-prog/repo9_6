@@ -210,7 +210,14 @@
 <!-- Hint toast -->
 <div id="toast" class="toast" aria-live="polite"></div>
 
+<!-- Floating audio controls — elderly-friendly labels, always accessible -->
+<div id="audio-controls" class="audio-controls">
+  <button id="btn-sound" type="button" title="Sound on/off" aria-label="Sound on/off">🔔 Sound</button>
+  <button id="btn-music" type="button" title="Music on/off" aria-label="Music on/off">🎵 Music</button>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
+<script src="audio.js"></script>
 <script src="client.js"></script>
 </body>
 </html>
