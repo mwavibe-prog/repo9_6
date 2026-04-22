@@ -102,7 +102,13 @@
   });
 
   $("#btn-tv-back").addEventListener("click", () => {
-    showScreen("screen-lobby");
+    // If the game is running, go back to the play view; otherwise the lobby.
+    if (roomState && roomState.started) {
+      showScreen("screen-game");
+      renderGame();
+    } else {
+      showScreen("screen-lobby");
+    }
   });
 
   // ---------- Game screen ----------
@@ -129,17 +135,17 @@
   socket.on("state", (state) => {
     roomState = state;
     renderLobby();
-    // Transition to game screen the first time the game starts
-    if (state.started && !$("#screen-game").classList.contains("active")) {
-      // Default tab to my chosen role
+
+    // When the game starts, move lobby-viewers into the play screen. Don't
+    // steal focus from anyone currently watching the TV or already playing.
+    const onLobby = $("#screen-lobby").classList.contains("active");
+    if (state.started && onLobby) {
       const myPlayer = state.players.find((p) => p.id === myId);
       if (myPlayer && myPlayer.role) myRole = myPlayer.role;
       showScreen("screen-game");
     }
-    if (state.started) renderGame();
-    else if ($("#screen-game").classList.contains("active")) {
-      // host ended game — state.started is false, gameOver event handles the screen
-    }
+
+    if (state.started && $("#screen-game").classList.contains("active")) renderGame();
     if ($("#screen-tv").classList.contains("active")) renderTvScreen();
   });
 
@@ -406,29 +412,96 @@
     }
   }
 
-  // ---------- Render: TV screen (host's big display) ----------
+  // ---------- Render: TV screen (the big shared display) ----------
+  // The TV has two sub-views: a pre-game "how to join" screen with the QR
+  // code, and an in-game live board so every phone-player can glance up
+  // and see team progress.
   let tvLastRenderedCode = null;
   function renderTvScreen() {
     if (!roomState) return;
     const code = roomState.code;
-    $("#tv-code").textContent = code;
+    const inGame = !!roomState.started;
 
-    const joinUrl = `${JOIN_BASE_URL}?room=${encodeURIComponent(code)}`;
-    $("#tv-url").textContent = joinUrl;
+    $("#tv-pregame").hidden = inGame;
+    $("#tv-ingame").hidden = !inGame;
 
-    // Only (re)load the QR if the code has changed — avoids image flicker.
-    if (tvLastRenderedCode !== code) {
-      $("#tv-qr").src = `/qr?text=${encodeURIComponent(joinUrl)}`;
-      tvLastRenderedCode = code;
+    if (!inGame) {
+      // Pre-game: QR + room code + player roster
+      $("#tv-code").textContent = code;
+      const joinUrl = `${JOIN_BASE_URL}?room=${encodeURIComponent(code)}`;
+      $("#tv-url").textContent = joinUrl;
+
+      // Only (re)load the QR if the code changed — avoids image flicker
+      if (tvLastRenderedCode !== code) {
+        $("#tv-qr").src = `/qr?text=${encodeURIComponent(joinUrl)}`;
+        tvLastRenderedCode = code;
+      }
+
+      const ul = $("#tv-players");
+      ul.innerHTML = "";
+      roomState.players.forEach((p) => {
+        const li = document.createElement("li");
+        li.textContent = p.name + (p.role ? ` — ${ROLE_LABELS[p.role]}` : "");
+        ul.appendChild(li);
+      });
+    } else {
+      // In-game: big score, room code, and a live card for each customer
+      $("#tv-live-score").textContent = roomState.completed;
+      $("#tv-live-code").textContent = code;
+
+      const guestsEl = $("#tv-live-guests");
+      if (roomState.customers.length === 0) {
+        guestsEl.innerHTML = `<p class="empty-note">Waiting for the first guest…</p>`;
+      } else {
+        guestsEl.innerHTML = "";
+        for (const c of roomState.customers) {
+          const order = roomState.orders.find((o) => o.id === c.orderId);
+          if (!order) continue;
+          const status = {
+            waiting_take:  { text: "Waiting for a server",   cls: "waiting" },
+            preparing:     { text: "Kitchen is working",     cls: "preparing" },
+            ready_deliver: { text: "Ready to deliver!",      cls: "ready" },
+            delivered:     { text: "Delivered — thank you!", cls: "delivered" },
+          }[c.status] || { text: c.status, cls: "" };
+
+          const card = document.createElement("div");
+          card.className = "tv-guest-card";
+          card.innerHTML = `
+            <div class="tv-guest-head">
+              <span class="tv-guest-face" aria-hidden="true">${c.face}</span>
+              <span class="tv-guest-name">${escapeHtml(c.name)}</span>
+            </div>
+            <div class="tv-guest-order">${order.food.icon} ${escapeHtml(order.food.name)} &nbsp;+&nbsp; ${order.drink.icon} ${escapeHtml(order.drink.name)}</div>
+            <div class="tv-guest-prog">
+              <span class="tv-prog ${order.foodDone ? "done" : ""}">Food: ${order.foodProgress.length}/${order.food.ingredients.length}${order.foodDone ? " ✓" : ""}</span>
+              <span class="tv-prog ${order.drinkDone ? "done" : ""}">Drink: ${drinkStepCount(order)}/2${order.drinkDone ? " ✓" : ""}</span>
+            </div>
+            <div class="tv-guest-status ${status.cls}">${status.text}</div>
+          `;
+          guestsEl.appendChild(card);
+        }
+      }
+
+      const ul = $("#tv-live-players");
+      ul.innerHTML = "";
+      roomState.players
+        .slice()
+        .sort((a, b) => (b.served || 0) - (a.served || 0))
+        .forEach((p) => {
+          const li = document.createElement("li");
+          const roleText = p.role ? ` — ${ROLE_LABELS[p.role]}` : "";
+          const servedText = p.served ? ` · served ${p.served}` : "";
+          li.textContent = p.name + roleText + servedText;
+          ul.appendChild(li);
+        });
     }
+  }
 
-    const ul = $("#tv-players");
-    ul.innerHTML = "";
-    roomState.players.forEach((p) => {
-      const li = document.createElement("li");
-      li.textContent = p.name + (p.role ? ` — ${ROLE_LABELS[p.role]}` : "");
-      ul.appendChild(li);
-    });
+  function drinkStepCount(order) {
+    let n = 0;
+    if (order.drinkProgress.cup) n++;
+    if (order.drinkProgress.drink) n++;
+    return n;
   }
 
   // If someone scanned the QR code, their URL includes ?room=ABCD. Prefill

@@ -18,6 +18,12 @@
     <h1>Friendly Diner</h1>
     <p class="subtitle">A cooking game to play with friends and family.<br/>Up to 15 players. No rush. Have fun together.</p>
 
+    <ol class="steps" aria-label="How to join">
+      <li><b>Type your name</b> in the box below.</li>
+      <li><b>Type the 4-letter code</b> shown on the TV screen, then tap <b>Join a game</b>.</li>
+      <li>On your phone, <b>pick a job</b>. Then the host taps <b>Start Game</b>.</li>
+    </ol>
+
     <label class="field">
       <span>Your name</span>
       <input id="name-input" type="text" maxlength="20" autocomplete="off" placeholder="Type your name" />
@@ -49,6 +55,12 @@
     <h2>Room code: <span id="lobby-code" class="code-badge">----</span></h2>
     <p class="subtitle">Share this code with friends so they can join.</p>
     <button id="btn-tv" class="big">📺 Open TV view (scan to join)</button>
+
+    <ol class="steps" aria-label="What to do next">
+      <li><b>Tap one of the three jobs</b> below to pick what you would like to do.</li>
+      <li>Wait until <b>everyone has picked a job</b>.</li>
+      <li>When everyone is ready, the host taps <b>Start Game</b>.</li>
+    </ol>
 
     <h3>Pick your job</h3>
     <div class="role-picker">
@@ -97,6 +109,7 @@
   <!-- Order Taker station -->
   <div id="station-taker" class="station">
     <h2>At the counter</h2>
+    <p class="role-help">Tap <b>Take this order</b> when a guest arrives. When food and drink are both ready, tap <b>Deliver order</b>.</p>
     <div id="customers-list" class="customers-list">
       <p class="empty-note">No guests yet. Please wait a moment…</p>
     </div>
@@ -105,6 +118,7 @@
   <!-- Cook station -->
   <div id="station-cook" class="station" hidden>
     <h2>Kitchen tickets</h2>
+    <p class="role-help">Tap the ingredients <b>in the order shown</b>. Use <b>Undo last</b> if you tap the wrong one.</p>
     <div id="cook-list" class="tickets-list">
       <p class="empty-note">No food orders right now.</p>
     </div>
@@ -113,13 +127,14 @@
   <!-- Barista station -->
   <div id="station-barista" class="station" hidden>
     <h2>Drink tickets</h2>
+    <p class="role-help">First tap <b>Get a cup</b>, then tap <b>Pour</b> the drink. That's it!</p>
     <div id="barista-list" class="tickets-list">
       <p class="empty-note">No drink orders right now.</p>
     </div>
   </div>
 </section>
 
-<!-- ============ TV SCREEN (big display for host) ============ -->
+<!-- ============ TV SCREEN (big display, everyone looks at this) ============ -->
 <section id="screen-tv" class="screen">
   <div class="tv-wrap">
     <div class="logo-bar logo-bar-tv">
@@ -127,25 +142,57 @@
       <img src="images/weeswares-logo.png" alt="WeesWares" class="logo logo-weeswares" />
     </div>
 
-    <h1 class="tv-title">Friendly Diner</h1>
-    <p class="tv-subtitle">Scan the QR code or type the room code to join</p>
+    <!-- ---- PRE-GAME: shown while waiting in the lobby ---- -->
+    <div id="tv-pregame">
+      <h1 class="tv-title">Friendly Diner</h1>
+      <p class="tv-subtitle">Join on your phone — everyone plays together</p>
 
-    <div class="tv-main">
-      <div class="tv-code-block">
-        <div class="tv-label">Room code</div>
-        <div id="tv-code" class="tv-code">----</div>
-        <div class="tv-players-wrap">
-          <div class="tv-label">Players in this room</div>
-          <ul id="tv-players" class="tv-players"></ul>
+      <ol class="tv-steps">
+        <li><b>Open the camera</b> on your phone and point it at the QR code.</li>
+        <li>Tap the link that appears, then <b>type your name</b>.</li>
+        <li>Pick a job. When everyone is ready, the host taps <b>Start Game</b>.</li>
+      </ol>
+
+      <div class="tv-main">
+        <div class="tv-code-block">
+          <div class="tv-label">Room code</div>
+          <div id="tv-code" class="tv-code">----</div>
+          <div class="tv-players-wrap">
+            <div class="tv-label">Players in this room</div>
+            <ul id="tv-players" class="tv-players"></ul>
+          </div>
         </div>
-      </div>
-      <div class="tv-qr-block">
-        <img id="tv-qr" class="tv-qr" alt="QR code to join the game" />
-        <div class="tv-url" id="tv-url">—</div>
+        <div class="tv-qr-block">
+          <img id="tv-qr" class="tv-qr" alt="QR code to join the game" />
+          <div class="tv-url" id="tv-url">—</div>
+        </div>
       </div>
     </div>
 
-    <button id="btn-tv-back" class="big tv-back">← Back to lobby</button>
+    <!-- ---- IN-GAME: shown during play so every phone-player can glance up ---- -->
+    <div id="tv-ingame" hidden>
+      <div class="tv-live-top">
+        <div class="tv-live-score">
+          <div class="tv-label">Orders served</div>
+          <div id="tv-live-score" class="tv-live-score-value">0</div>
+        </div>
+        <h1 class="tv-live-heading">Friendly Diner — live!</h1>
+        <div class="tv-live-room">
+          <div class="tv-label">Room</div>
+          <div id="tv-live-code" class="tv-live-code">----</div>
+        </div>
+      </div>
+
+      <h2 class="tv-section-title">Guests at the counter</h2>
+      <div id="tv-live-guests" class="tv-live-guests">
+        <p class="empty-note">Waiting for the first guest…</p>
+      </div>
+
+      <h3 class="tv-section-title">Team</h3>
+      <ul id="tv-live-players" class="tv-players"></ul>
+    </div>
+
+    <button id="btn-tv-back" class="big tv-back">← Leave TV view</button>
   </div>
 </section>
 
