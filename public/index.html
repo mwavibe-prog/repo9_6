@@ -11,6 +11,10 @@
 <!-- ============ HOME SCREEN ============ -->
 <section id="screen-home" class="screen active">
   <div class="card">
+    <div class="logo-bar">
+      <img src="images/crest-logo.svg" alt="Crest Secondary" class="logo logo-crest" />
+      <img src="images/weeswares-logo.svg" alt="WeesWares" class="logo logo-weeswares" />
+    </div>
     <h1>Friendly Diner</h1>
     <p class="subtitle">A cooking game to play with friends and family.<br/>Up to 15 players. No rush. Have fun together.</p>
 
@@ -38,8 +42,13 @@
 <!-- ============ LOBBY SCREEN ============ -->
 <section id="screen-lobby" class="screen">
   <div class="card">
+    <div class="logo-bar">
+      <img src="images/crest-logo.svg" alt="Crest Secondary" class="logo logo-crest" />
+      <img src="images/weeswares-logo.svg" alt="WeesWares" class="logo logo-weeswares" />
+    </div>
     <h2>Room code: <span id="lobby-code" class="code-badge">----</span></h2>
     <p class="subtitle">Share this code with friends so they can join.</p>
+    <button id="btn-tv" class="big">📺 Open TV view (scan to join)</button>
 
     <h3>Pick your job</h3>
     <div class="role-picker">
@@ -107,6 +116,36 @@
     <div id="barista-list" class="tickets-list">
       <p class="empty-note">No drink orders right now.</p>
     </div>
+  </div>
+</section>
+
+<!-- ============ TV SCREEN (big display for host) ============ -->
+<section id="screen-tv" class="screen">
+  <div class="tv-wrap">
+    <div class="logo-bar logo-bar-tv">
+      <img src="images/crest-logo.svg" alt="Crest Secondary" class="logo logo-crest" />
+      <img src="images/weeswares-logo.svg" alt="WeesWares" class="logo logo-weeswares" />
+    </div>
+
+    <h1 class="tv-title">Friendly Diner</h1>
+    <p class="tv-subtitle">Scan the QR code or type the room code to join</p>
+
+    <div class="tv-main">
+      <div class="tv-code-block">
+        <div class="tv-label">Room code</div>
+        <div id="tv-code" class="tv-code">----</div>
+        <div class="tv-players-wrap">
+          <div class="tv-label">Players in this room</div>
+          <ul id="tv-players" class="tv-players"></ul>
+        </div>
+      </div>
+      <div class="tv-qr-block">
+        <img id="tv-qr" class="tv-qr" alt="QR code to join the game" />
+        <div class="tv-url" id="tv-url">—</div>
+      </div>
+    </div>
+
+    <button id="btn-tv-back" class="big tv-back">← Back to lobby</button>
   </div>
 </section>
 

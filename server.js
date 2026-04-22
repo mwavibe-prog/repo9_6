@@ -2,12 +2,32 @@ const path = require("path");
 const http = require("http");
 const express = require("express");
 const { Server } = require("socket.io");
+const QRCode = require("qrcode");
 
 const PORT = process.env.PORT || 3000;
 const MAX_PLAYERS_PER_ROOM = 15;
 
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
+
+// Generate a QR code SVG for any text (used on the TV screen to show the join link)
+app.get("/qr", async (req, res) => {
+  const text = String(req.query.text || "").slice(0, 500);
+  if (!text) return res.status(400).send("missing text");
+  try {
+    const svg = await QRCode.toString(text, {
+      type: "svg",
+      errorCorrectionLevel: "M",
+      margin: 1,
+      color: { dark: "#0d2f6f", light: "#ffffff" },
+    });
+    res.set("Content-Type", "image/svg+xml");
+    res.set("Cache-Control", "public, max-age=300");
+    res.send(svg);
+  } catch (err) {
+    res.status(500).send("qr error");
+  }
+});
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });

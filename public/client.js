@@ -2,6 +2,10 @@
 (function () {
   const socket = io();
 
+  // Public base URL used in the TV-screen QR code. Players who scan it will
+  // land on the game with ?room=XXXX prefilled.
+  const JOIN_BASE_URL = "https://repo96-production.up.railway.app/";
+
   // ---------- Friendly labels for ingredients & drink steps ----------
   const INGREDIENT_LABELS = {
     bottom_bun: { name: "Bottom Bun", icon: "🍞" },
@@ -91,6 +95,16 @@
     socket.emit("startGame");
   });
 
+  // Open the TV view (host usually shows this on a big screen/projector)
+  $("#btn-tv").addEventListener("click", () => {
+    renderTvScreen();
+    showScreen("screen-tv");
+  });
+
+  $("#btn-tv-back").addEventListener("click", () => {
+    showScreen("screen-lobby");
+  });
+
   // ---------- Game screen ----------
   $$(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -126,6 +140,7 @@
     else if ($("#screen-game").classList.contains("active")) {
       // host ended game — state.started is false, gameOver event handles the screen
     }
+    if ($("#screen-tv").classList.contains("active")) renderTvScreen();
   });
 
   socket.on("gameOver", (data) => {
@@ -390,6 +405,44 @@
       list.appendChild(card);
     }
   }
+
+  // ---------- Render: TV screen (host's big display) ----------
+  let tvLastRenderedCode = null;
+  function renderTvScreen() {
+    if (!roomState) return;
+    const code = roomState.code;
+    $("#tv-code").textContent = code;
+
+    const joinUrl = `${JOIN_BASE_URL}?room=${encodeURIComponent(code)}`;
+    $("#tv-url").textContent = joinUrl;
+
+    // Only (re)load the QR if the code has changed — avoids image flicker.
+    if (tvLastRenderedCode !== code) {
+      $("#tv-qr").src = `/qr?text=${encodeURIComponent(joinUrl)}`;
+      tvLastRenderedCode = code;
+    }
+
+    const ul = $("#tv-players");
+    ul.innerHTML = "";
+    roomState.players.forEach((p) => {
+      const li = document.createElement("li");
+      li.textContent = p.name + (p.role ? ` — ${ROLE_LABELS[p.role]}` : "");
+      ul.appendChild(li);
+    });
+  }
+
+  // If someone scanned the QR code, their URL includes ?room=ABCD. Prefill
+  // the code field so they can just type their name and tap Join.
+  (function prefillRoomFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const r = (params.get("room") || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+      if (r.length === 4) {
+        const input = $("#code-input");
+        if (input) input.value = r;
+      }
+    } catch (_) { /* ignore */ }
+  })();
 
   function isCustomerActive(order) {
     const c = roomState.customers.find((x) => x.id === order.customerId);
