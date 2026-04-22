@@ -76,8 +76,13 @@
 <section id="screen-game" class="screen">
   <header class="game-header">
     <div class="score-box">
-      <div class="score-label">Orders served</div>
+      <div class="score-label">Score</div>
       <div id="score" class="score-value">0</div>
+    </div>
+    <div class="side-stats">
+      <div class="stat-chip stat-streak" title="Streak"><span>🔥</span> <b id="stat-streak">0</b></div>
+      <div class="stat-chip stat-wave"   title="Wave">  <span>🌊</span> <b id="stat-wave">1</b></div>
+      <div class="stat-chip stat-served" title="Guests served"><span>✅</span> <b id="stat-served">0</b></div>
     </div>
     <div id="phase-banner" class="phase-banner">
       <span class="phase-ico" aria-hidden="true">📝</span>
@@ -86,9 +91,15 @@
     <button id="btn-end" class="end-btn" hidden>End game</button>
   </header>
 
+  <!-- Celebratory banner that appears briefly on wave-up or big streaks -->
+  <div id="cheer-banner" class="cheer-banner" hidden aria-live="polite"></div>
+
   <div id="serving-context" class="serving-context" hidden>
-    <span class="serving-face" aria-hidden="true"></span>
-    <span class="serving-text"></span>
+    <div class="serving-top">
+      <span class="serving-face" aria-hidden="true"></span>
+      <span class="serving-text"></span>
+    </div>
+    <div class="serving-patience"></div>
   </div>
 
   <!-- Order Taker station -->
@@ -165,7 +176,7 @@
     <div id="tv-ingame" hidden>
       <div class="tv-live-top">
         <div class="tv-live-score">
-          <div class="tv-label">Orders served</div>
+          <div class="tv-label">Score</div>
           <div id="tv-live-score" class="tv-live-score-value">0</div>
         </div>
         <h1 class="tv-live-heading">Friendly Diner — live!</h1>
@@ -173,6 +184,12 @@
           <div class="tv-label">Room</div>
           <div id="tv-live-code" class="tv-live-code">----</div>
         </div>
+      </div>
+      <div class="tv-live-strip">
+        <div class="tv-stat">🔥 Streak <b id="tv-live-streak">0</b></div>
+        <div class="tv-stat">🌊 Wave <b id="tv-live-wave">1</b></div>
+        <div class="tv-stat">✅ Served <b id="tv-live-served">0</b></div>
+        <div class="tv-stat">😞 Left <b id="tv-live-left">0</b></div>
       </div>
 
       <h2 class="tv-section-title">Guests at the counter</h2>
@@ -192,7 +209,14 @@
 <section id="screen-over" class="screen">
   <div class="card">
     <h1>Great job, team!</h1>
-    <p class="subtitle">You served <b id="over-score">0</b> happy guests.</p>
+    <p class="subtitle">Here's how the shift went.</p>
+    <div class="over-stats">
+      <div class="over-stat big"><div class="k">Final score</div><div class="v" id="over-score">0</div></div>
+      <div class="over-stat"><div class="k">Guests served</div><div class="v" id="over-served">0</div></div>
+      <div class="over-stat"><div class="k">Best streak</div><div class="v" id="over-streak">0</div></div>
+      <div class="over-stat"><div class="k">Wave reached</div><div class="v" id="over-wave">1</div></div>
+      <div class="over-stat"><div class="k">Guests who left</div><div class="v" id="over-left">0</div></div>
+    </div>
     <h3>Your team</h3>
     <ul id="over-players" class="player-list"></ul>
     <button id="btn-back" class="big primary">Back to lobby</button>

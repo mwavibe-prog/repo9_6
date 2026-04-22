@@ -143,10 +143,23 @@ function newRoom(code, hostSocketId) {
     players: new Map(), // socketId -> player
     customers: [], // at most one active at a time
     orders: [], // the single in-flight order, if any
-    completed: 0,
+    completed: 0, // number of guests delivered (regardless of tip size)
+    score: 0,     // total points including tips
+    streak: 0,    // consecutive deliveries without a "leave"
+    bestStreak: 0,
+    left: 0,      // guests who walked off
+    wave: 1,
+    waveProgress: 0, // deliveries toward next wave-up (5 per wave)
     customerCounter: 0,
     orderCounter: 0,
   };
+}
+
+// Patience budget (ms) for the current wave. Generous at wave 1, never
+// tighter than a minute — elderly players still have plenty of time even
+// at the hardest wave.
+function patienceForWave(wave) {
+  return Math.max(60000, 100000 - (wave - 1) * 10000);
 }
 
 function publicPlayer(p) {
@@ -164,10 +177,13 @@ function publicState(room) {
       name: c.name,
       face: c.face,
       phrase: c.phrase,
+      vip: c.vip,
       orderId: c.orderId,
-      status: c.status, // waiting_take | preparing | ready_deliver | left
+      status: c.status, // waiting_take | preparing | ready_deliver | delivered | left
       foodOrder: c.foodOrder,
       drinkOrder: c.drinkOrder,
+      patienceLeft: Math.max(0, c.expiresAt - Date.now()),
+      patienceMax: c.patienceMax,
     })),
     orders: room.orders.map((o) => ({
       id: o.id,
@@ -184,6 +200,11 @@ function publicState(room) {
       status: o.status, // taken | preparing | ready | delivered
     })),
     completed: room.completed,
+    score: room.score,
+    streak: room.streak,
+    bestStreak: room.bestStreak,
+    left: room.left,
+    wave: room.wave,
     menu: MENU,
   };
 }
@@ -222,15 +243,24 @@ function spawnCustomer(room) {
   const drinkOrder = shuffled(Object.keys(MENU.drinks));
   const ingredientOrder = shuffled(Object.keys(MENU.ingredients));
 
+  // 20% chance of a VIP guest who tips double. Little burst of excitement.
+  const vip = Math.random() < 0.20;
+  const patienceMax = patienceForWave(room.wave);
+  const arrivedAt = Date.now();
+
   const customer = {
     id: customerId,
     name,
     face,
     phrase,
+    vip,
     orderId,
     status: "waiting_take",
     foodOrder,
     drinkOrder,
+    arrivedAt,
+    patienceMax,
+    expiresAt: arrivedAt + patienceMax,
   };
 
   const order = {
@@ -267,6 +297,42 @@ function findOrder(room, orderId) {
 function findCustomer(room, customerId) {
   return room.customers.find((c) => c.id === customerId);
 }
+
+// Single ticker checks every room twice a second. If any guest's patience
+// has hit zero, they walk off (streak resets, "left" count goes up, next
+// guest arrives after a short beat).
+function handleLeave(room, customer) {
+  customer.status = "left";
+  const order = findOrder(room, customer.orderId);
+  if (order) order.status = "left";
+  room.streak = 0;
+  room.left += 1;
+  io.to(room.code).emit("guestLeft", { name: customer.name });
+  broadcast(room);
+  setTimeout(() => {
+    const r = rooms.get(room.code);
+    if (!r) return;
+    r.customers = r.customers.filter((c) => c.id !== customer.id);
+    r.orders = r.orders.filter((o) => o.customerId !== customer.id);
+    if (r.started) spawnCustomer(r);
+    else broadcast(r);
+  }, 2500);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (!room.started) continue;
+    for (const c of room.customers) {
+      if (c.status === "delivered" || c.status === "left") continue;
+      if (c.status === "ready_deliver") continue; // if the order's ready, don't time out mid-delivery
+      if (now >= c.expiresAt) {
+        handleLeave(room, c);
+        break; // only one active guest at a time anyway
+      }
+    }
+  }
+}, 500);
 
 function refreshStatuses(room) {
   for (const order of room.orders) {
@@ -332,12 +398,22 @@ io.on("connection", (socket) => {
     room.started = false;
     io.to(room.code).emit("gameOver", {
       completed: room.completed,
+      score: room.score,
+      bestStreak: room.bestStreak,
+      left: room.left,
+      wave: room.wave,
       players: [...room.players.values()].map(publicPlayer),
     });
-    // Reset game state but keep players & roles for a possible next round
+    // Reset game state but keep players for a possible next round
     room.customers = [];
     room.orders = [];
     room.completed = 0;
+    room.score = 0;
+    room.streak = 0;
+    room.bestStreak = 0;
+    room.left = 0;
+    room.wave = 1;
+    room.waveProgress = 0;
     for (const p of room.players.values()) p.served = 0;
     broadcast(room);
   });
@@ -456,7 +532,8 @@ io.on("connection", (socket) => {
     broadcast(room);
   });
 
-  // Order Taker delivers a ready order
+  // Order Taker delivers a ready order. Computes a speed-based tip and
+  // updates streak/wave state on the room.
   socket.on("deliver", ({ customerId }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
@@ -464,20 +541,55 @@ io.on("connection", (socket) => {
     if (!customer || customer.status !== "ready_deliver") return;
     const order = findOrder(room, customer.orderId);
     if (!order) return;
+
+    // Speed tip: deliver with ≥50% patience left = 3 pts, ≥20% = 2 pts,
+    // anything above zero = 1 pt. VIP guests (crown) tip double.
+    const msLeft = Math.max(0, customer.expiresAt - Date.now());
+    const ratio = customer.patienceMax ? msLeft / customer.patienceMax : 0;
+    let tip = 1;
+    if (ratio >= 0.5) tip = 3;
+    else if (ratio >= 0.2) tip = 2;
+    if (customer.vip) tip *= 2;
+
     customer.status = "delivered";
     order.status = "delivered";
     room.completed += 1;
+    room.score += tip;
+    room.streak += 1;
+    if (room.streak > room.bestStreak) room.bestStreak = room.streak;
+    room.waveProgress += 1;
+
+    // Let everyone see the earned tip popup
+    io.to(room.code).emit("tipEarned", {
+      tip,
+      vip: !!customer.vip,
+      streak: room.streak,
+      name: customer.name,
+    });
+
+    // Streak milestones
+    if ([3, 5, 10, 15, 20].includes(room.streak)) {
+      io.to(room.code).emit("streakMilestone", { streak: room.streak });
+    }
+
+    // Wave up every 5 deliveries — patience tightens for the next guests.
+    if (room.waveProgress >= 5) {
+      room.wave += 1;
+      room.waveProgress = 0;
+      io.to(room.code).emit("waveUp", { wave: room.wave });
+    }
+
     const player = room.players.get(socket.id);
     if (player) player.served = (player.served || 0) + 1;
-    // Let players see the "delivered" state for a moment, then clear the
-    // board and bring in the next guest (strict one-at-a-time flow).
+
+    // Short "thank you" pause, then clear + spawn next guest
     setTimeout(() => {
       const r = rooms.get(currentRoomCode);
       if (!r) return;
       r.customers = r.customers.filter((c) => c.id !== customer.id);
       r.orders = r.orders.filter((o) => o.id !== order.id);
       if (r.started) {
-        spawnCustomer(r); // broadcasts as part of spawn
+        spawnCustomer(r);
       } else {
         broadcast(r);
       }

@@ -29,6 +29,18 @@
   // Tiny guard so SFX calls never break the UI if audio.js failed to load.
   const sfx = (name) => { try { window.Audio && window.Audio.sfx(name); } catch (_) {} };
 
+  // Smoothly tick patience bars between server broadcasts — every state
+  // update stores a snapshot of patienceLeft and we interpolate from it.
+  let patienceReceivedAt = 0;
+  function patienceLeftNow(c) {
+    if (!c || typeof c.patienceLeft !== "number") return 0;
+    return Math.max(0, c.patienceLeft - (Date.now() - patienceReceivedAt));
+  }
+  function patiencePercentNow(c) {
+    if (!c || !c.patienceMax) return 0;
+    return Math.max(0, Math.min(100, (patienceLeftNow(c) / c.patienceMax) * 100));
+  }
+
   // ---------- State ----------
   let myId = null;
   let myName = "";
@@ -146,6 +158,7 @@
 
   socket.on("state", (state) => {
     roomState = state;
+    patienceReceivedAt = Date.now();
     renderLobby();
 
     // When the game starts, move lobby-viewers into the play screen. Don't
@@ -212,7 +225,11 @@
   }
 
   socket.on("gameOver", (data) => {
-    $("#over-score").textContent = data.completed;
+    $("#over-score").textContent   = data.score ?? data.completed ?? 0;
+    $("#over-served").textContent  = data.completed ?? 0;
+    $("#over-streak").textContent  = data.bestStreak ?? 0;
+    $("#over-wave").textContent    = data.wave ?? 1;
+    $("#over-left").textContent    = data.left ?? 0;
     const ul = $("#over-players");
     ul.innerHTML = "";
     data.players
@@ -226,6 +243,46 @@
       });
     showScreen("screen-over");
   });
+
+  // Speed-tip popup after a delivery. Rendered as a toast with a big emoji
+  // so players can see the reward even if they looked away for a second.
+  socket.on("tipEarned", (d) => {
+    sfx("deliver");
+    const bonus = d.tip > 1 ? ` (tip +${d.tip})` : "";
+    const crown = d.vip ? " 👑 VIP" : "";
+    toast(`🎉 ${escapeHtml(d.name)} served${crown}${bonus}`);
+  });
+
+  socket.on("streakMilestone", (d) => {
+    sfx("deliver");
+    cheer(`🔥 Streak of ${d.streak}!`);
+  });
+
+  socket.on("waveUp", (d) => {
+    sfx("newCustomer");
+    cheer(`🌊 Wave ${d.wave}! The diner is getting busy…`);
+  });
+
+  socket.on("guestLeft", (d) => {
+    sfx("wrong");
+    toast(`😞 ${escapeHtml(d.name)} got tired of waiting and left.`);
+  });
+
+  // Full-width celebration banner used for streak / wave events
+  function cheer(msg) {
+    const el = $("#cheer-banner");
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    el.classList.remove("show");
+    void el.offsetWidth;
+    el.classList.add("show");
+    clearTimeout(cheer._t);
+    cheer._t = setTimeout(() => {
+      el.classList.remove("show");
+      setTimeout(() => { el.hidden = true; }, 400);
+    }, 2200);
+  }
 
   socket.on("hint", (h) => {
     sfx("wrong");
@@ -298,7 +355,10 @@
   // ---------- Render: Game ----------
   function renderGame() {
     if (!roomState) return;
-    $("#score").textContent = roomState.completed;
+    $("#score").textContent        = roomState.score ?? roomState.completed ?? 0;
+    $("#stat-streak").textContent  = roomState.streak ?? 0;
+    $("#stat-wave").textContent    = roomState.wave ?? 1;
+    $("#stat-served").textContent  = roomState.completed ?? 0;
 
     const phase = currentPhase();
     const meta = PHASE_META[phase];
@@ -310,11 +370,12 @@
     const ctx = $("#serving-context");
     const c = roomState.customers[0];
     const order = c ? roomState.orders.find((x) => x.id === c.orderId) : null;
-    if (c && order && c.status !== "delivered") {
+    if (c && order && c.status !== "delivered" && c.status !== "left") {
       ctx.hidden = false;
-      ctx.querySelector(".serving-face").textContent = c.face;
+      ctx.querySelector(".serving-face").textContent = (c.vip ? "👑" : "") + c.face;
       ctx.querySelector(".serving-text").innerHTML =
-        `Now serving <b>${escapeHtml(c.name)}</b> — ${order.food.icon} ${escapeHtml(order.food.name)} + ${order.drink.icon} ${escapeHtml(order.drink.name)}`;
+        `Now serving <b>${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</b> — ${order.food.icon} ${escapeHtml(order.food.name)} + ${order.drink.icon} ${escapeHtml(order.drink.name)}`;
+      ctx.querySelector(".serving-patience").innerHTML = patienceBarHtml(c);
     } else {
       ctx.hidden = true;
     }
@@ -344,13 +405,14 @@
     if (!order) return;
     const delivered = c.status === "delivered";
     panel.innerHTML = `
-      <div class="customer-card ${delivered ? "delivered-flash" : ""}">
+      <div class="customer-card ${delivered ? "delivered-flash" : ""}${c.vip ? " vip" : ""}">
         <div class="who">
-          <div class="face" aria-hidden="true">${c.face}</div>
-          <div class="name">${escapeHtml(c.name)}</div>
+          <div class="face" aria-hidden="true">${c.vip ? "<span class='crown' aria-hidden='true'>👑</span>" : ""}${c.face}</div>
+          <div class="name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</div>
           <div class="mood" aria-hidden="true">${delivered ? "🎉" : "😋"}</div>
         </div>
         <div class="order">${order.food.icon} <b>${escapeHtml(order.food.name)}</b> &amp; ${order.drink.icon} <b>${escapeHtml(order.drink.name)}</b></div>
+        ${delivered ? "" : patienceBarHtml(c)}
         ${delivered
           ? `<div class="big-action deliver" style="text-align:center;">Delivered — thank you! 🎉</div>`
           : `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order 🎉</button>`
@@ -372,6 +434,34 @@
   // Briefly flash a card with a celebration class when a guest is delivered.
   // Stored here so re-renders don't steal the animation mid-flight.
   const deliveredFlash = new Set();
+
+  function patienceBarHtml(c) {
+    if (!c || typeof c.patienceMax !== "number") return "";
+    const pct = patiencePercentNow(c);
+    const state = pct > 50 ? "ok" : (pct > 20 ? "warn" : "danger");
+    return `<div class="patience" data-cust="${c.id}">
+              <div class="patience-label">Patience</div>
+              <div class="patience-track">
+                <div class="patience-fill ${state}" style="width:${pct.toFixed(1)}%"></div>
+              </div>
+            </div>`;
+  }
+
+  // Animate every patience bar currently on screen. Runs at ~10fps, pauses
+  // while the document is hidden to save battery on phones.
+  setInterval(() => {
+    if (document.hidden) return;
+    if (!roomState || !roomState.customers) return;
+    const c = roomState.customers[0];
+    if (!c) return;
+    const pct = patiencePercentNow(c);
+    const state = pct > 50 ? "ok" : (pct > 20 ? "warn" : "danger");
+    document.querySelectorAll('.patience[data-cust="' + c.id + '"] .patience-fill').forEach((el) => {
+      el.style.width = pct.toFixed(1) + "%";
+      el.classList.remove("ok", "warn", "danger");
+      el.classList.add(state);
+    });
+  }, 120);
 
   function moodFor(customer, order, picks) {
     if (customer.status === "delivered") return "🎉";
@@ -455,18 +545,19 @@
       }
 
       const card = document.createElement("div");
-      card.className = "customer-card" + (deliveredFlash.has(c.id) ? " delivered-flash" : "");
+      card.className = "customer-card" + (deliveredFlash.has(c.id) ? " delivered-flash" : "") + (c.vip ? " vip" : "");
       card.dataset.customerId = c.id;
       card.innerHTML = `
         <div class="who">
-          <div class="face" aria-hidden="true">${c.face}</div>
-          <div class="name">${escapeHtml(c.name)}</div>
+          <div class="face" aria-hidden="true">${c.vip ? "<span class='crown' aria-hidden='true'>👑</span>" : ""}${c.face}</div>
+          <div class="name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</div>
           <div class="mood" aria-hidden="true">${moodFor(c, order, picks)}</div>
         </div>
         ${c.phrase ? `<div class="speech">“${escapeHtml(c.phrase)}”</div>` : ""}
         <div class="order">Would like: <b>${food.icon} ${escapeHtml(food.name)}</b> and <b>${drink.icon} ${escapeHtml(drink.name)}</b></div>
         <div class="progress-row">${foodPill} ${drinkPill}</div>
         <div class="status ${statusLabel.cls}">${statusLabel.text}</div>
+        ${patienceBarHtml(c)}
         ${body}
       `;
       list.appendChild(card);
@@ -697,8 +788,12 @@
       });
     } else {
       // In-game: big score, room code, and a live card for each customer
-      $("#tv-live-score").textContent = roomState.completed;
-      $("#tv-live-code").textContent = code;
+      $("#tv-live-score").textContent   = roomState.score ?? roomState.completed ?? 0;
+      $("#tv-live-code").textContent    = code;
+      $("#tv-live-streak").textContent  = roomState.streak ?? 0;
+      $("#tv-live-wave").textContent    = roomState.wave ?? 1;
+      $("#tv-live-served").textContent  = roomState.completed ?? 0;
+      $("#tv-live-left").textContent    = roomState.left ?? 0;
 
       const guestsEl = $("#tv-live-guests");
       if (roomState.customers.length === 0) {
@@ -713,14 +808,15 @@
             preparing:     { text: "Kitchen is working",     cls: "preparing" },
             ready_deliver: { text: "Ready to deliver!",      cls: "ready" },
             delivered:     { text: "Delivered — thank you!", cls: "delivered" },
+            left:          { text: "Walked out 😞",           cls: "delivered" },
           }[c.status] || { text: c.status, cls: "" };
 
           const card = document.createElement("div");
-          card.className = "tv-guest-card";
+          card.className = "tv-guest-card" + (c.vip ? " vip" : "");
           card.innerHTML = `
             <div class="tv-guest-head">
-              <span class="tv-guest-face" aria-hidden="true">${c.face}</span>
-              <span class="tv-guest-name">${escapeHtml(c.name)}</span>
+              <span class="tv-guest-face" aria-hidden="true">${c.vip ? "👑" : ""}${c.face}</span>
+              <span class="tv-guest-name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</span>
             </div>
             <div class="tv-guest-order">${order.food.icon} ${escapeHtml(order.food.name)} &nbsp;+&nbsp; ${order.drink.icon} ${escapeHtml(order.drink.name)}</div>
             <div class="tv-guest-prog">
@@ -728,6 +824,7 @@
               <span class="tv-prog ${order.drinkDone ? "done" : ""}">Drink: ${drinkStepCount(order)}/2${order.drinkDone ? " ✓" : ""}</span>
             </div>
             <div class="tv-guest-status ${status.cls}">${status.text}</div>
+            ${c.status !== "delivered" && c.status !== "left" ? patienceBarHtml(c) : ""}
           `;
           guestsEl.appendChild(card);
         }
