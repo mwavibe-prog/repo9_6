@@ -34,7 +34,6 @@
   let myName = "";
   let roomCode = null;
   let roomState = null;
-  let myRole = "taker"; // local view preference
 
   // ---------- Element helpers ----------
   const $ = (sel) => document.querySelector(sel);
@@ -86,14 +85,6 @@
     showScreen("screen-lobby");
   }
 
-  $$(".role-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const role = btn.dataset.role;
-      myRole = role;
-      socket.emit("pickRole", { role });
-    });
-  });
-
   $("#btn-start").addEventListener("click", () => {
     socket.emit("startGame");
   });
@@ -115,13 +106,6 @@
   });
 
   // ---------- Game screen ----------
-  $$(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      myRole = btn.dataset.role;
-      renderGame();
-    });
-  });
-
   $("#btn-end").addEventListener("click", () => {
     if (confirm("End the game now and show the summary?")) {
       socket.emit("endGame");
@@ -168,8 +152,6 @@
     // steal focus from anyone currently watching the TV or already playing.
     const onLobby = $("#screen-lobby").classList.contains("active");
     if (state.started && onLobby) {
-      const myPlayer = state.players.find((p) => p.id === myId);
-      if (myPlayer && myPlayer.role) myRole = myPlayer.role;
       showScreen("screen-game");
     }
 
@@ -238,7 +220,7 @@
       .sort((a, b) => (b.served || 0) - (a.served || 0))
       .forEach((p) => {
         const li = document.createElement("li");
-        li.innerHTML = `<span>${escapeHtml(p.name)} — ${ROLE_LABELS[p.role] || ""}</span>
+        li.innerHTML = `<span>${escapeHtml(p.name)}</span>
                         <span class="role-chip">served ${p.served || 0}</span>`;
         ul.appendChild(li);
       });
@@ -279,15 +261,8 @@
       const isMe = p.id === myId;
       li.innerHTML = `
         <span>${escapeHtml(p.name)}${isMe ? " (you)" : ""}${isHost ? '<span class="host-tag">★ host</span>' : ""}</span>
-        <span class="role-chip">${p.role ? ROLE_LABELS[p.role] : "Choosing…"}</span>
       `;
       ul.appendChild(li);
-    });
-
-    // Highlight my role button
-    const myPlayer = roomState.players.find((p) => p.id === myId);
-    $$(".role-btn").forEach((b) => {
-      b.classList.toggle("selected", myPlayer && b.dataset.role === myPlayer.role);
     });
 
     // Host sees "Start Game"; others see waiting message
@@ -297,23 +272,97 @@
     $("#btn-end").hidden = !iAmHost;
   }
 
+  // Derive the current game phase from the single active order.
+  // Every player's phone follows the same phase; whoever taps first helps.
+  function currentPhase() {
+    if (!roomState || roomState.customers.length === 0) return "wait";
+    const c = roomState.customers[0];
+    if (c.status === "delivered") return "delivered";
+    if (c.status === "waiting_take") return "take";
+    const o = roomState.orders.find((x) => x.id === c.orderId);
+    if (!o) return "wait";
+    if (!o.foodDone) return "cook";
+    if (!o.drinkDone) return "drink";
+    return "deliver";
+  }
+
+  const PHASE_META = {
+    take:      { ico: "📝", text: "Take the order" },
+    cook:      { ico: "🍳", text: "Cook the food" },
+    drink:     { ico: "☕", text: "Make the drink" },
+    deliver:   { ico: "🎉", text: "Deliver the order" },
+    delivered: { ico: "✨", text: "Delivered!" },
+    wait:      { ico: "⏳", text: "Waiting for the next guest…" },
+  };
+
   // ---------- Render: Game ----------
   function renderGame() {
     if (!roomState) return;
     $("#score").textContent = roomState.completed;
 
-    $$(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.role === myRole));
+    const phase = currentPhase();
+    const meta = PHASE_META[phase];
+    $("#phase-banner .phase-ico").textContent = meta.ico;
+    $("#phase-banner .phase-text").textContent = meta.text;
+    $("#phase-banner").setAttribute("data-phase", phase);
 
-    $("#station-taker").hidden = myRole !== "taker";
-    $("#station-cook").hidden = myRole !== "cook";
-    $("#station-barista").hidden = myRole !== "barista";
+    // Show "Now serving: <name> — <food> + <drink>" while a guest is active
+    const ctx = $("#serving-context");
+    const c = roomState.customers[0];
+    const order = c ? roomState.orders.find((x) => x.id === c.orderId) : null;
+    if (c && order && c.status !== "delivered") {
+      ctx.hidden = false;
+      ctx.querySelector(".serving-face").textContent = c.face;
+      ctx.querySelector(".serving-text").innerHTML =
+        `Now serving <b>${escapeHtml(c.name)}</b> — ${order.food.icon} ${escapeHtml(order.food.name)} + ${order.drink.icon} ${escapeHtml(order.drink.name)}`;
+    } else {
+      ctx.hidden = true;
+    }
+
+    $("#station-taker").hidden   = phase !== "take";
+    $("#station-cook").hidden    = phase !== "cook";
+    $("#station-barista").hidden = phase !== "drink";
+    $("#station-deliver").hidden = !(phase === "deliver" || phase === "delivered");
 
     const iAmHost = myId === roomState.hostId;
     $("#btn-end").hidden = !iAmHost;
 
-    if (myRole === "taker") renderTakerStation();
-    else if (myRole === "cook") renderCookStation();
-    else if (myRole === "barista") renderBaristaStation();
+    if (phase === "take")    renderTakerStation();
+    else if (phase === "cook")  renderCookStation();
+    else if (phase === "drink") renderBaristaStation();
+    else if (phase === "deliver" || phase === "delivered") renderDeliverPanel();
+  }
+
+  function renderDeliverPanel() {
+    const panel = $("#deliver-panel");
+    const c = roomState.customers[0];
+    if (!c) {
+      panel.innerHTML = `<p class="empty-note">Waiting…</p>`;
+      return;
+    }
+    const order = roomState.orders.find((o) => o.id === c.orderId);
+    if (!order) return;
+    const delivered = c.status === "delivered";
+    panel.innerHTML = `
+      <div class="customer-card ${delivered ? "delivered-flash" : ""}">
+        <div class="who">
+          <div class="face" aria-hidden="true">${c.face}</div>
+          <div class="name">${escapeHtml(c.name)}</div>
+          <div class="mood" aria-hidden="true">${delivered ? "🎉" : "😋"}</div>
+        </div>
+        <div class="order">${order.food.icon} <b>${escapeHtml(order.food.name)}</b> &amp; ${order.drink.icon} <b>${escapeHtml(order.drink.name)}</b></div>
+        ${delivered
+          ? `<div class="big-action deliver" style="text-align:center;">Delivered — thank you! 🎉</div>`
+          : `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order 🎉</button>`
+        }
+      </div>
+    `;
+    panel.onclick = (ev) => {
+      const btn = ev.target.closest("button[data-act='deliver']");
+      if (!btn) return;
+      sfx("deliver");
+      socket.emit("deliver", { customerId: btn.dataset.id });
+    };
   }
 
   // Per-customer draft selections (local only — each taker has their own).

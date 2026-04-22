@@ -273,26 +273,59 @@ button {
   .score-value.pulse, .tv-live-score-value.pulse { animation: none; }
 }
 
-.role-tabs {
-  display: flex;
-  gap: 8px;
+/* Phase banner in the game header — shows what everyone should do right now */
+.phase-banner {
   flex: 1;
-  flex-wrap: wrap;
-}
-.tab-btn {
-  padding: 14px 18px;
-  font-size: 1.1rem;
-  font-weight: 700;
-  border: 3px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 18px;
+  min-height: 60px;
   border-radius: 12px;
   background: #fff;
-  color: var(--ink);
-  min-height: 60px;
+  border: 3px solid var(--line);
+  font-weight: 800;
+  transition: background 200ms ease, border-color 200ms ease, color 200ms ease;
 }
-.tab-btn.active {
-  background: var(--primary);
-  color: var(--primary-ink);
-  border-color: var(--primary);
+.phase-banner .phase-ico { font-size: 1.8rem; line-height: 1; }
+.phase-banner .phase-text {
+  font-size: clamp(1rem, 2.2vw, 1.3rem);
+  letter-spacing: 0.02em;
+}
+.phase-banner[data-phase="take"]     { background: #fff8e1; border-color: #e6c97a; }
+.phase-banner[data-phase="cook"]     { background: #fff1e0; border-color: #f1a54a; color: #7a3a0a; }
+.phase-banner[data-phase="drink"]    { background: #eaf6fc; border-color: #86c8e5; color: #0b4b66; }
+.phase-banner[data-phase="deliver"]  { background: #e7f4ea; border-color: var(--accent); color: #1f5b33; }
+.phase-banner[data-phase="delivered"]{ background: #e7f4ea; border-color: var(--accent); color: #1f5b33; }
+.phase-banner[data-phase="wait"]     { background: #eef0f4; border-color: #cfd4de; color: var(--muted); }
+
+.serving-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1100px;
+  margin: 10px auto 0;
+  padding: 8px 14px;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  font-size: 1rem;
+  box-shadow: var(--shadow);
+}
+.serving-context .serving-face { font-size: 1.8rem; line-height: 1; }
+
+.deliver-panel {
+  max-width: 560px;
+  margin: 0 auto;
+}
+.deliver-panel .customer-card {
+  padding: 22px 20px;
+}
+.deliver-panel .big-action.deliver {
+  font-size: 1.4rem;
+  padding: 22px;
+  min-height: 80px;
 }
 .end-btn {
   padding: 12px 18px;

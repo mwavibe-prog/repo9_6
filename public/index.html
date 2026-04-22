@@ -56,32 +56,13 @@
     <p class="subtitle">Share this code with friends so they can join.</p>
     <button id="btn-tv" class="big">📺 Open TV view (scan to join)</button>
 
-    <ol class="steps" aria-label="What to do next">
-      <li><b>Tap one of the three jobs</b> below to pick what you would like to do.</li>
-      <li>Wait until <b>everyone has picked a job</b>.</li>
-      <li>When everyone is ready, the host taps <b>Start Game</b>.</li>
+    <ol class="steps" aria-label="How this works">
+      <li>Every player will play <b>all three jobs</b> together.</li>
+      <li>Your phone will guide you: <b>take the order → cook → make the drink → deliver</b>.</li>
+      <li>Whoever taps first helps the team. Just follow the prompt on your phone!</li>
     </ol>
 
-    <h3>Pick your job</h3>
-    <div class="role-picker">
-      <button class="role-btn" data-role="taker">
-        <span class="role-icon">📝</span>
-        <span class="role-name">Take Orders</span>
-        <span class="role-desc">Greet guests and deliver food</span>
-      </button>
-      <button class="role-btn" data-role="cook">
-        <span class="role-icon">🍳</span>
-        <span class="role-name">Cook Food</span>
-        <span class="role-desc">Build burgers, hot dogs, fries</span>
-      </button>
-      <button class="role-btn" data-role="barista">
-        <span class="role-icon">☕</span>
-        <span class="role-name">Make Drinks</span>
-        <span class="role-desc">Pour coffee, tea, juice, water</span>
-      </button>
-    </div>
-
-    <h3>Players in this room</h3>
+    <h3>Your team</h3>
     <ul id="lobby-players" class="player-list"></ul>
 
     <div class="lobby-actions">
@@ -98,39 +79,50 @@
       <div class="score-label">Orders served</div>
       <div id="score" class="score-value">0</div>
     </div>
-    <div class="role-tabs">
-      <button class="tab-btn" data-role="taker">📝 Orders</button>
-      <button class="tab-btn" data-role="cook">🍳 Kitchen</button>
-      <button class="tab-btn" data-role="barista">☕ Drinks</button>
+    <div id="phase-banner" class="phase-banner">
+      <span class="phase-ico" aria-hidden="true">📝</span>
+      <span class="phase-text">Take the order</span>
     </div>
     <button id="btn-end" class="end-btn" hidden>End game</button>
   </header>
 
+  <div id="serving-context" class="serving-context" hidden>
+    <span class="serving-face" aria-hidden="true"></span>
+    <span class="serving-text"></span>
+  </div>
+
   <!-- Order Taker station -->
   <div id="station-taker" class="station">
     <h2>At the counter</h2>
-    <p class="role-help">Tap <b>Take this order</b> when a guest arrives. When food and drink are both ready, tap <b>Deliver order</b>.</p>
+    <p class="role-help">Greet the guest and <b>tap the matching food and drink</b> from the menus. Then tap <b>Send to kitchen</b>.</p>
     <div id="customers-list" class="customers-list">
-      <p class="empty-note">No guests yet. Please wait a moment…</p>
+      <p class="empty-note">Waiting for the next guest…</p>
     </div>
   </div>
 
   <!-- Cook station -->
   <div id="station-cook" class="station" hidden>
-    <h2>Kitchen tickets</h2>
-    <p class="role-help">Tap the ingredients <b>in the order shown</b>. Use <b>Undo last</b> if you tap the wrong one.</p>
+    <h2>In the kitchen</h2>
+    <p class="role-help">Follow the recipe at the top. <b>Tap each ingredient in order</b> from the ring below.</p>
     <div id="cook-list" class="tickets-list">
-      <p class="empty-note">No food orders right now.</p>
+      <p class="empty-note">Waiting for the next order…</p>
     </div>
   </div>
 
   <!-- Barista station -->
   <div id="station-barista" class="station" hidden>
-    <h2>Drink tickets</h2>
-    <p class="role-help">First tap <b>Get a cup</b>, then tap <b>Pour</b> the drink. That's it!</p>
+    <h2>At the drinks counter</h2>
+    <p class="role-help">First tap <b>Get a cup</b>, then <b>pour the right drink</b>.</p>
     <div id="barista-list" class="tickets-list">
-      <p class="empty-note">No drink orders right now.</p>
+      <p class="empty-note">Waiting for the next drink order…</p>
     </div>
+  </div>
+
+  <!-- Deliver station -->
+  <div id="station-deliver" class="station" hidden>
+    <h2>Ready to deliver!</h2>
+    <p class="role-help">The order is ready. <b>Tap Deliver</b> to bring it to the guest.</p>
+    <div id="deliver-panel" class="deliver-panel"></div>
   </div>
 </section>
 

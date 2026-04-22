@@ -150,7 +150,7 @@ function newRoom(code, hostSocketId) {
 }
 
 function publicPlayer(p) {
-  return { id: p.id, name: p.name, role: p.role, served: p.served };
+  return { id: p.id, name: p.name, served: p.served };
 }
 
 function publicState(room) {
@@ -291,7 +291,7 @@ io.on("connection", (socket) => {
     const safeName = String(name || "Friend").slice(0, 20).trim() || "Friend";
     const code = uniqueRoomCode();
     const room = newRoom(code, socket.id);
-    room.players.set(socket.id, { id: socket.id, name: safeName, role: null, served: 0 });
+    room.players.set(socket.id, { id: socket.id, name: safeName, served: 0 });
     rooms.set(code, room);
     socket.join(code);
     currentRoomCode = code;
@@ -307,20 +307,10 @@ io.on("connection", (socket) => {
     if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
       return cb && cb({ ok: false, error: "This room is full (15 players)." });
     }
-    room.players.set(socket.id, { id: socket.id, name: safeName, role: null, served: 0 });
+    room.players.set(socket.id, { id: socket.id, name: safeName, served: 0 });
     socket.join(roomCode);
     currentRoomCode = roomCode;
     cb && cb({ ok: true, code: roomCode });
-    broadcast(room);
-  });
-
-  socket.on("pickRole", ({ role }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room) return;
-    const player = room.players.get(socket.id);
-    if (!player) return;
-    if (!["taker", "cook", "barista"].includes(role)) return;
-    player.role = role;
     broadcast(room);
   });
 
@@ -329,10 +319,6 @@ io.on("connection", (socket) => {
     if (!room) return;
     if (socket.id !== room.hostId) return;
     if (room.started) return;
-    // Make sure every player has a role; if not, assign the host's choice or default to taker
-    for (const p of room.players.values()) {
-      if (!p.role) p.role = "taker";
-    }
     room.started = true;
     startSpawning(room);
     broadcast(room);
