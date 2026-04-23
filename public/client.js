@@ -41,6 +41,13 @@
     return Math.max(0, Math.min(100, (patienceLeftNow(c) / c.patienceMax) * 100));
   }
 
+  // Look up my own player entry in the room. Each player runs their own
+  // race in competitive mode — my customer/order lives here.
+  function getMe() {
+    if (!roomState || !myId) return null;
+    return roomState.players.find((p) => p.id === myId) || null;
+  }
+
   // ---------- State ----------
   let myId = null;
   let myName = "";
@@ -154,7 +161,7 @@
   socket.on("connect", () => { myId = socket.id; });
 
   // Remember what state we saw last so we can fire SFX on transitions.
-  let prevSnapshot = { customers: {}, orders: {}, completed: 0, started: false };
+  let prevSnapshot = { myCustomer: null, myScore: 0, started: false };
 
   socket.on("state", (state) => {
     roomState = state;
@@ -176,40 +183,33 @@
       if (window.Audio) window.Audio.stopMusic();
     }
 
-    // SFX based on state diffs (new customer, order ready, score up)
-    const custMap = {};
-    for (const c of state.customers) custMap[c.id] = c;
-    const orderMap = {};
-    for (const o of state.orders) orderMap[o.id] = o;
-    for (const c of state.customers) {
-      if (!prevSnapshot.customers[c.id] && c.status === "waiting_take") {
-        sfx("newCustomer");
-      } else {
-        const prev = prevSnapshot.customers[c.id];
-        if (prev && prev.status !== "ready_deliver" && c.status === "ready_deliver") {
-          sfx("ready");
-        }
+    // SFX based on MY player's state diffs (new guest, order ready, score up)
+    const me = state.players.find((p) => p.id === myId);
+    const prevMyCust = prevSnapshot.myCustomer;
+    if (me && me.customer) {
+      if (!prevMyCust || prevMyCust.id !== me.customer.id) {
+        if (me.customer.status === "waiting_take") sfx("newCustomer");
+      } else if (prevMyCust.status !== "ready_deliver" && me.customer.status === "ready_deliver") {
+        sfx("ready");
       }
     }
-    if (state.completed > prevSnapshot.completed) {
-      // Pulse the on-screen score counter
+    if (me && prevSnapshot.myScore != null && me.score > prevSnapshot.myScore) {
       flashScorePulse();
     }
     prevSnapshot = {
       started: state.started,
-      completed: state.completed,
-      customers: custMap,
-      orders: orderMap,
+      myCustomer: me && me.customer ? { id: me.customer.id, status: me.customer.status } : null,
+      myScore: me ? me.score : 0,
     };
 
     if (state.started && $("#screen-game").classList.contains("active")) renderGame();
     if ($("#screen-tv").classList.contains("active")) renderTvScreen();
 
-    // Drop any local taker drafts for customers that have moved past the
-    // "waiting_take" state — keeps the menu panel clean on the next render.
+    // Drop my local taker draft if my customer moved past waiting_take.
+    const myCustId = me && me.customer ? me.customer.id : null;
+    const myCustStatus = me && me.customer ? me.customer.status : null;
     for (const id of Object.keys(takerSelections)) {
-      const c = state.customers.find((x) => x.id === id);
-      if (!c || c.status !== "waiting_take") delete takerSelections[id];
+      if (id !== myCustId || myCustStatus !== "waiting_take") delete takerSelections[id];
     }
   });
 
@@ -225,22 +225,28 @@
   }
 
   socket.on("gameOver", (data) => {
-    $("#over-score").textContent   = data.score ?? data.completed ?? 0;
-    $("#over-served").textContent  = data.completed ?? 0;
-    $("#over-streak").textContent  = data.bestStreak ?? 0;
-    $("#over-wave").textContent    = data.wave ?? 1;
-    $("#over-left").textContent    = data.left ?? 0;
+    const standings = (data.standings || []).slice();
+    const me = standings.find((p) => p.id === myId);
+    const myRank = me ? standings.indexOf(me) + 1 : 0;
+    $("#over-rank").textContent    = myRank ? `#${myRank}` : "—";
+    $("#over-score").textContent   = me ? me.score || 0 : 0;
+    $("#over-served").textContent  = me ? me.served || 0 : 0;
+    $("#over-streak").textContent  = me ? me.bestStreak || 0 : 0;
+    $("#over-left").textContent    = me ? me.left || 0 : 0;
+
     const ul = $("#over-players");
     ul.innerHTML = "";
-    data.players
-      .slice()
-      .sort((a, b) => (b.served || 0) - (a.served || 0))
-      .forEach((p) => {
-        const li = document.createElement("li");
-        li.innerHTML = `<span>${escapeHtml(p.name)}</span>
-                        <span class="role-chip">served ${p.served || 0}</span>`;
-        ul.appendChild(li);
-      });
+    standings.forEach((p, i) => {
+      const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+      const isMe = p.id === myId;
+      const li = document.createElement("li");
+      li.className = isMe ? "me" : "";
+      li.innerHTML = `
+        <span><b>${medal}</b> ${escapeHtml(p.name)}${isMe ? " (you)" : ""}</span>
+        <span class="role-chip"><b>${p.score || 0}</b> pts · ${p.served || 0} served · best 🔥${p.bestStreak || 0}</span>
+      `;
+      ul.appendChild(li);
+    });
     showScreen("screen-over");
   });
 
@@ -329,16 +335,18 @@
     $("#btn-end").hidden = !iAmHost;
   }
 
-  // Derive the current game phase from the single active order.
-  // Every player's phone follows the same phase; whoever taps first helps.
+  // Phase derived from MY own customer — each player is running their own
+  // race, so phones are not in lockstep.
   function currentPhase() {
-    if (!roomState || roomState.customers.length === 0) return "wait";
-    const c = roomState.customers[0];
+    const me = getMe();
+    if (!me || !me.customer) return "wait";
+    const c = me.customer;
     if (c.status === "delivered") return "delivered";
+    if (c.status === "left")      return "wait";
     if (c.status === "waiting_take") return "take";
-    const o = roomState.orders.find((x) => x.id === c.orderId);
+    const o = me.order;
     if (!o) return "wait";
-    if (!o.foodDone) return "cook";
+    if (!o.foodDone)  return "cook";
     if (!o.drinkDone) return "drink";
     return "deliver";
   }
@@ -355,10 +363,15 @@
   // ---------- Render: Game ----------
   function renderGame() {
     if (!roomState) return;
-    $("#score").textContent        = roomState.score ?? roomState.completed ?? 0;
-    $("#stat-streak").textContent  = roomState.streak ?? 0;
-    $("#stat-wave").textContent    = roomState.wave ?? 1;
-    $("#stat-served").textContent  = roomState.completed ?? 0;
+    const me = getMe();
+    const myScore   = me ? me.score   : 0;
+    const myStreak  = me ? me.streak  : 0;
+    const myWave    = me ? me.wave    : 1;
+    const myServed  = me ? me.served  : 0;
+    $("#score").textContent        = myScore;
+    $("#stat-streak").textContent  = myStreak;
+    $("#stat-wave").textContent    = myWave;
+    $("#stat-served").textContent  = myServed;
 
     const phase = currentPhase();
     const meta = PHASE_META[phase];
@@ -366,10 +379,10 @@
     $("#phase-banner .phase-text").textContent = meta.text;
     $("#phase-banner").setAttribute("data-phase", phase);
 
-    // Show "Now serving: <name> — <food> + <drink>" while a guest is active
+    // Serving context uses MY customer
     const ctx = $("#serving-context");
-    const c = roomState.customers[0];
-    const order = c ? roomState.orders.find((x) => x.id === c.orderId) : null;
+    const c = me ? me.customer : null;
+    const order = me ? me.order : null;
     if (c && order && c.status !== "delivered" && c.status !== "left") {
       ctx.hidden = false;
       ctx.querySelector(".serving-face").textContent = (c.vip ? "👑" : "") + c.face;
@@ -388,20 +401,41 @@
     const iAmHost = myId === roomState.hostId;
     $("#btn-end").hidden = !iAmHost;
 
-    if (phase === "take")    renderTakerStation();
-    else if (phase === "cook")  renderCookStation();
-    else if (phase === "drink") renderBaristaStation();
+    if (phase === "take")         renderTakerStation();
+    else if (phase === "cook")    renderCookStation();
+    else if (phase === "drink")   renderBaristaStation();
     else if (phase === "deliver" || phase === "delivered") renderDeliverPanel();
+
+    renderLeaderboardMini();
+  }
+
+  // Compact live leaderboard under the header on every player's phone.
+  function renderLeaderboardMini() {
+    const el = $("#leaderboard-mini");
+    if (!el) return;
+    const ranked = (roomState.players || []).slice().sort(
+      (a, b) => (b.score || 0) - (a.score || 0) || (b.served || 0) - (a.served || 0)
+    );
+    el.innerHTML = ranked.map((p, i) => {
+      const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+      const isMe = p.id === myId;
+      return `<li class="${isMe ? "me" : ""}">
+        <span class="rank">${medal}</span>
+        <span class="who">${escapeHtml(p.name)}${isMe ? " (you)" : ""}</span>
+        <span class="pts"><b>${p.score || 0}</b> pts · ${p.served || 0} served</span>
+      </li>`;
+    }).join("");
   }
 
   function renderDeliverPanel() {
     const panel = $("#deliver-panel");
-    const c = roomState.customers[0];
+    const me = getMe();
+    const c = me && me.customer;
     if (!c) {
       panel.innerHTML = `<p class="empty-note">Waiting…</p>`;
       return;
     }
-    const order = roomState.orders.find((o) => o.id === c.orderId);
+    const order = me.order;
     if (!order) return;
     const delivered = c.status === "delivered";
     panel.innerHTML = `
@@ -415,7 +449,7 @@
         ${delivered ? "" : patienceBarHtml(c)}
         ${delivered
           ? `<div class="big-action deliver" style="text-align:center;">Delivered — thank you! 🎉</div>`
-          : `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order 🎉</button>`
+          : `<button class="big-action deliver" data-act="deliver">Deliver order 🎉</button>`
         }
       </div>
     `;
@@ -423,7 +457,7 @@
       const btn = ev.target.closest("button[data-act='deliver']");
       if (!btn) return;
       sfx("deliver");
-      socket.emit("deliver", { customerId: btn.dataset.id });
+      socket.emit("deliver");
     };
   }
 
@@ -447,20 +481,23 @@
             </div>`;
   }
 
-  // Animate every patience bar currently on screen. Runs at ~10fps, pauses
-  // while the document is hidden to save battery on phones.
+  // Animate patience bars on screen. Competitive mode means each player
+  // has their own customer, and the TV shows every player's customer at
+  // once — iterate them all.
   setInterval(() => {
     if (document.hidden) return;
-    if (!roomState || !roomState.customers) return;
-    const c = roomState.customers[0];
-    if (!c) return;
-    const pct = patiencePercentNow(c);
-    const state = pct > 50 ? "ok" : (pct > 20 ? "warn" : "danger");
-    document.querySelectorAll('.patience[data-cust="' + c.id + '"] .patience-fill').forEach((el) => {
-      el.style.width = pct.toFixed(1) + "%";
-      el.classList.remove("ok", "warn", "danger");
-      el.classList.add(state);
-    });
+    if (!roomState || !roomState.players) return;
+    const customers = [];
+    for (const p of roomState.players) if (p.customer) customers.push(p.customer);
+    for (const c of customers) {
+      const pct = patiencePercentNow(c);
+      const state = pct > 50 ? "ok" : (pct > 20 ? "warn" : "danger");
+      document.querySelectorAll('.patience[data-cust="' + c.id + '"] .patience-fill').forEach((el) => {
+        el.style.width = pct.toFixed(1) + "%";
+        el.classList.remove("ok", "warn", "danger");
+        el.classList.add(state);
+      });
+    }
   }, 120);
 
   function moodFor(customer, order, picks) {
@@ -473,101 +510,74 @@
     return correct ? "😊" : "🤔";
   }
 
-  // Taker: writes down each guest's order by tapping food + drink menus.
+  // Taker: my own guest only. Tap food + drink from the shuffled menus,
+  // then Send to Kitchen.
   function renderTakerStation() {
     const list = $("#customers-list");
-    const customers = roomState.customers;
-    if (customers.length === 0) {
-      list.innerHTML = `<p class="empty-note">No guests yet. Please wait a moment…</p>`;
+    const me = getMe();
+    const c = me && me.customer;
+    const order = me && me.order;
+    if (!c || !order) {
+      list.innerHTML = `<p class="empty-note">Waiting for the next guest…</p>`;
       return;
     }
 
     const menu = roomState.menu;
     list.innerHTML = "";
 
-    for (const c of customers) {
-      const order = roomState.orders.find((o) => o.id === c.orderId);
-      if (!order) continue;
+    const picks = takerSelections[c.id] || {};
+    const food = order.food;
+    const drink = order.drink;
 
-      const picks = takerSelections[c.id] || {};
-      const food = order.food;
-      const drink = order.drink;
+    const foodKeys = c.foodOrder || Object.keys(menu.foods);
+    const drinkKeys = c.drinkOrder || Object.keys(menu.drinks);
+    const foodBtns = foodKeys.map((k) => menu.foods[k]).filter(Boolean).map((f) => `
+      <button class="menu-btn ${picks.food === f.id ? "picked" : ""}" data-kind="food" data-id="${f.id}">
+        <span class="ico" aria-hidden="true">${f.icon}</span>
+        <span>${escapeHtml(f.name)}</span>
+      </button>
+    `).join("");
+    const drinkBtns = drinkKeys.map((k) => menu.drinks[k]).filter(Boolean).map((d) => `
+      <button class="menu-btn ${picks.drink === d.id ? "picked" : ""}" data-kind="drink" data-id="${d.id}">
+        <span class="ico" aria-hidden="true">${d.icon}</span>
+        <span>${escapeHtml(d.name)}</span>
+      </button>
+    `).join("");
+    const canSend = !!(picks.food && picks.drink);
 
-      const statusLabel = {
-        waiting_take:  { text: "Ready to order",              cls: "waiting" },
-        preparing:     { text: "Kitchen is working on it",    cls: "preparing" },
-        ready_deliver: { text: "Food & drink ready!",         cls: "ready" },
-        delivered:     { text: "Delivered — thank you!",      cls: "delivered" },
-      }[c.status] || { text: c.status, cls: "" };
+    const foodPill  = `<span class="progress-pill">${food.icon} ${escapeHtml(food.name)}</span>`;
+    const drinkPill = `<span class="progress-pill">${drink.icon} ${escapeHtml(drink.name)}</span>`;
 
-      const foodPill = `<span class="progress-pill ${order.foodDone ? "done" : ""}">${food.icon} ${escapeHtml(food.name)}${order.foodDone ? " ✓" : ""}</span>`;
-      const drinkPill = `<span class="progress-pill ${order.drinkDone ? "done" : ""}">${drink.icon} ${escapeHtml(drink.name)}${order.drinkDone ? " ✓" : ""}</span>`;
-
-      // Main action area — differs by status
-      let body = "";
-      if (c.status === "waiting_take") {
-        // Each guest's menu order is shuffled by the server so the taker
-        // has to actually look at icons, not tap from muscle memory.
-        const foodKeys = c.foodOrder || Object.keys(menu.foods);
-        const drinkKeys = c.drinkOrder || Object.keys(menu.drinks);
-        const foodBtns = foodKeys.map((k) => menu.foods[k]).filter(Boolean).map((f) => `
-          <button class="menu-btn ${picks.food === f.id ? "picked" : ""}" data-kind="food" data-id="${f.id}">
-            <span class="ico" aria-hidden="true">${f.icon}</span>
-            <span>${escapeHtml(f.name)}</span>
-          </button>
-        `).join("");
-        const drinkBtns = drinkKeys.map((k) => menu.drinks[k]).filter(Boolean).map((d) => `
-          <button class="menu-btn ${picks.drink === d.id ? "picked" : ""}" data-kind="drink" data-id="${d.id}">
-            <span class="ico" aria-hidden="true">${d.icon}</span>
-            <span>${escapeHtml(d.name)}</span>
-          </button>
-        `).join("");
-        const canSend = !!(picks.food && picks.drink);
-        body = `
-          <div class="menu-section">
-            <div class="menu-title">Choose the food</div>
-            <div class="menu-grid">${foodBtns}</div>
-          </div>
-          <div class="menu-section">
-            <div class="menu-title">Choose the drink</div>
-            <div class="menu-grid">${drinkBtns}</div>
-          </div>
-          <button class="big-action primary send-btn" data-act="send" data-id="${c.id}" ${canSend ? "" : "disabled"}>
-            ${canSend ? "Send to kitchen" : "Pick a food and a drink"}
-          </button>
-        `;
-      } else if (c.status === "ready_deliver") {
-        body = `<button class="big-action deliver" data-act="deliver" data-id="${c.id}">Deliver order 🎉</button>`;
-      } else if (c.status === "preparing") {
-        body = `<button class="big-action" disabled>⌛ Kitchen is working…</button>`;
-      } else if (c.status === "delivered") {
-        body = `<button class="big-action" disabled>Delivered — thank you!</button>`;
-      }
-
-      const card = document.createElement("div");
-      card.className = "customer-card" + (deliveredFlash.has(c.id) ? " delivered-flash" : "") + (c.vip ? " vip" : "");
-      card.dataset.customerId = c.id;
-      card.innerHTML = `
-        <div class="who">
-          <div class="face" aria-hidden="true">${c.vip ? "<span class='crown' aria-hidden='true'>👑</span>" : ""}${c.face}</div>
-          <div class="name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</div>
-          <div class="mood" aria-hidden="true">${moodFor(c, order, picks)}</div>
-        </div>
-        ${c.phrase ? `<div class="speech">“${escapeHtml(c.phrase)}”</div>` : ""}
-        <div class="order">Would like: <b>${food.icon} ${escapeHtml(food.name)}</b> and <b>${drink.icon} ${escapeHtml(drink.name)}</b></div>
-        <div class="progress-row">${foodPill} ${drinkPill}</div>
-        <div class="status ${statusLabel.cls}">${statusLabel.text}</div>
-        ${patienceBarHtml(c)}
-        ${body}
-      `;
-      list.appendChild(card);
-    }
+    const card = document.createElement("div");
+    card.className = "customer-card" + (c.vip ? " vip" : "");
+    card.dataset.customerId = c.id;
+    card.innerHTML = `
+      <div class="who">
+        <div class="face" aria-hidden="true">${c.vip ? "<span class='crown' aria-hidden='true'>👑</span>" : ""}${c.face}</div>
+        <div class="name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</div>
+        <div class="mood" aria-hidden="true">${moodFor(c, order, picks)}</div>
+      </div>
+      ${c.phrase ? `<div class="speech">“${escapeHtml(c.phrase)}”</div>` : ""}
+      <div class="order">Would like: <b>${food.icon} ${escapeHtml(food.name)}</b> and <b>${drink.icon} ${escapeHtml(drink.name)}</b></div>
+      <div class="progress-row">${foodPill} ${drinkPill}</div>
+      ${patienceBarHtml(c)}
+      <div class="menu-section">
+        <div class="menu-title">Choose the food</div>
+        <div class="menu-grid">${foodBtns}</div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-title">Choose the drink</div>
+        <div class="menu-grid">${drinkBtns}</div>
+      </div>
+      <button class="big-action primary send-btn" data-act="send" ${canSend ? "" : "disabled"}>
+        ${canSend ? "Send to kitchen" : "Pick a food and a drink"}
+      </button>
+    `;
+    list.appendChild(card);
 
     list.onclick = (ev) => {
-      // Menu selection (food or drink)
       const menuBtn = ev.target.closest("button.menu-btn");
       if (menuBtn) {
-        const card = menuBtn.closest(".customer-card");
         const cid = card.dataset.customerId;
         const kind = menuBtn.dataset.kind;
         const id = menuBtn.dataset.id;
@@ -578,40 +588,24 @@
         renderTakerStation();
         return;
       }
-      // Primary buttons
-      const btn = ev.target.closest("button[data-act]");
+      const btn = ev.target.closest("button[data-act='send']");
       if (!btn) return;
-      const id = btn.dataset.id;
-      if (btn.dataset.act === "send") {
-        const picks = takerSelections[id] || {};
-        if (!picks.food || !picks.drink) return;
-        sfx("orderSent");
-        socket.emit("submitOrder", { customerId: id, foodId: picks.food, drinkId: picks.drink });
-      }
-      if (btn.dataset.act === "deliver") {
-        deliveredFlash.add(id);
-        setTimeout(() => { deliveredFlash.delete(id); }, 1800);
-        sfx("deliver");
-        socket.emit("deliver", { customerId: id });
-      }
+      const p = takerSelections[c.id] || {};
+      if (!p.food || !p.drink) return;
+      sfx("orderSent");
+      socket.emit("submitOrder", { foodId: p.food, drinkId: p.drink });
     };
   }
 
-  // Cook: one ticket at a time, shown as a ring of ingredients around a
-  // central "plate" that displays the recipe being built.
+  // Cook: my own ticket — circular ingredient ring.
   function renderCookStation() {
     const list = $("#cook-list");
-    const order = roomState.orders.find((o) => !o.foodDone && o.status !== "delivered" && isCustomerActive(o));
+    const me = getMe();
+    const order = me && me.order;
+    const customer = me && me.customer;
 
-    if (!order) {
+    if (!order || !customer || order.foodDone) {
       list.innerHTML = `<p class="empty-note">Waiting for the next order…</p>`;
-      return;
-    }
-
-    const customer = roomState.customers.find((c) => c.id === order.customerId);
-    const waitingToBeTaken = customer && customer.status === "waiting_take";
-    if (waitingToBeTaken) {
-      list.innerHTML = `<p class="empty-note">⏳ The server is still taking the order…</p>`;
       return;
     }
 
@@ -674,84 +668,76 @@
     list.querySelectorAll(".ring-btn").forEach((b) => {
       b.addEventListener("click", () => {
         sfx("ingredient");
-        socket.emit("addIngredient", { orderId: order.id, ingredient: b.dataset.ing });
+        socket.emit("addIngredient", { ingredient: b.dataset.ing });
       });
     });
     list.querySelectorAll(".cook-undo").forEach((b) => {
       b.addEventListener("click", () => {
         sfx("tap");
-        socket.emit("undoIngredient", { orderId: order.id });
+        socket.emit("undoIngredient");
       });
     });
   }
 
-  // Barista: two-step drinks (cup, then pour)
+  // Barista: my own drink ticket — two steps (cup + pour right drink).
   function renderBaristaStation() {
     const list = $("#barista-list");
-    const tickets = roomState.orders.filter((o) => !o.drinkDone && o.status !== "delivered" && isCustomerActive(o));
-    if (tickets.length === 0) {
-      list.innerHTML = `<p class="empty-note">No drink orders right now. Nice work!</p>`;
+    const me = getMe();
+    const order = me && me.order;
+    const customer = me && me.customer;
+    if (!order || !customer || order.drinkDone) {
+      list.innerHTML = `<p class="empty-note">Waiting for the next drink order…</p>`;
       return;
     }
-    list.innerHTML = "";
-    for (const order of tickets) {
-      const customer = roomState.customers.find((c) => c.id === order.customerId);
-      const waitingToBeTaken = customer && customer.status === "waiting_take";
-      const cupDone = order.drinkProgress.cup;
-      const drinkDone = order.drinkProgress.drink;
 
-      const steps = `
-        <ol>
-          <li class="${cupDone ? "done" : ""} ${!cupDone ? "next" : ""}">🥤 Get a cup${cupDone ? " ✓" : ""}</li>
-          <li class="${drinkDone ? "done" : ""} ${cupDone && !drinkDone ? "next" : ""}">${order.drink.icon} Pour ${escapeHtml(order.drink.name)}${drinkDone ? " ✓" : ""}</li>
-        </ol>
-      `;
+    const cupDone = order.drinkProgress.cup;
+    const drinkDone = order.drinkProgress.drink;
 
-      const takenHint = waitingToBeTaken ? `<p class="status waiting">Waiting for a server to take this order.</p>` : "";
-      const guestTag = customer ? `for <b>${escapeHtml(customer.name)}</b>` : "";
+    const steps = `
+      <ol>
+        <li class="${cupDone ? "done" : ""} ${!cupDone ? "next" : ""}">🥤 Get a cup${cupDone ? " ✓" : ""}</li>
+        <li class="${drinkDone ? "done" : ""} ${cupDone && !drinkDone ? "next" : ""}">${order.drink.icon} Pour ${escapeHtml(order.drink.name)}${drinkDone ? " ✓" : ""}</li>
+      </ol>
+    `;
+    const guestTag = `for <b>${escapeHtml(customer.name)}</b>`;
 
-      // Distractor pour: all 4 drinks as options. Server validates; wrong
-      // pour gets a gentle hint instead of a silent no-op.
-      const drinks = roomState.menu.drinks;
-      const pourBtns = Object.values(drinks).map((d) => `
-        <button class="drink-step-btn pour-btn" data-step="pour" data-drink="${d.id}"
-          ${!cupDone || drinkDone || waitingToBeTaken ? "disabled" : ""}>
-          <span class="ico" aria-hidden="true">${d.icon}</span>
-          <span>Pour ${escapeHtml(d.name)}</span>
+    const drinks = roomState.menu.drinks;
+    const pourBtns = Object.values(drinks).map((d) => `
+      <button class="drink-step-btn pour-btn" data-step="pour" data-drink="${d.id}"
+        ${!cupDone || drinkDone ? "disabled" : ""}>
+        <span class="ico" aria-hidden="true">${d.icon}</span>
+        <span>Pour ${escapeHtml(d.name)}</span>
+      </button>
+    `).join("");
+
+    const card = document.createElement("div");
+    card.className = "ticket-card";
+    card.innerHTML = `
+      <h4>${order.drink.icon} ${escapeHtml(order.drink.name)}</h4>
+      <div class="for">${guestTag}</div>
+      <div class="recipe">${steps}</div>
+      <div class="drink-palette">
+        <button class="drink-step-btn cup-btn" data-step="cup" ${cupDone ? "disabled" : ""}>
+          <span class="ico" aria-hidden="true">🥤</span>
+          <span>Get a cup</span>
         </button>
-      `).join("");
+      </div>
+      <div class="menu-title" style="margin-top:10px;">Then pour the right drink</div>
+      <div class="drink-palette pour-grid">${pourBtns}</div>
+    `;
 
-      const card = document.createElement("div");
-      card.className = "ticket-card";
-      card.innerHTML = `
-        <h4>${order.drink.icon} ${escapeHtml(order.drink.name)}</h4>
-        <div class="for">${guestTag}</div>
-        ${takenHint}
-        <div class="recipe">${steps}</div>
-        <div class="drink-palette">
-          <button class="drink-step-btn cup-btn" data-step="cup" ${cupDone || waitingToBeTaken ? "disabled" : ""}>
-            <span class="ico" aria-hidden="true">🥤</span>
-            <span>Get a cup</span>
-          </button>
-        </div>
-        <div class="menu-title" style="margin-top:10px;">Then pour the right drink</div>
-        <div class="drink-palette pour-grid">
-          ${pourBtns}
-        </div>
-      `;
-
-      card.querySelectorAll(".drink-step-btn").forEach((b) => {
-        b.addEventListener("click", () => {
-          const step = b.dataset.step;
-          const payload = { orderId: order.id, step };
-          if (step === "pour") payload.drinkId = b.dataset.drink;
-          if (step === "cup") sfx("cup"); else sfx("pour");
-          socket.emit("drinkStep", payload);
-        });
+    card.querySelectorAll(".drink-step-btn").forEach((b) => {
+      b.addEventListener("click", () => {
+        const step = b.dataset.step;
+        const payload = { step };
+        if (step === "pour") payload.drinkId = b.dataset.drink;
+        if (step === "cup") sfx("cup"); else sfx("pour");
+        socket.emit("drinkStep", payload);
       });
+    });
 
-      list.appendChild(card);
-    }
+    list.innerHTML = "";
+    list.appendChild(card);
   }
 
   // ---------- Render: TV screen (the big shared display) ----------
@@ -787,28 +773,39 @@
         ul.appendChild(li);
       });
     } else {
-      // In-game: big score, room code, and a live card for each customer
-      $("#tv-live-score").textContent   = roomState.score ?? roomState.completed ?? 0;
-      $("#tv-live-code").textContent    = code;
-      $("#tv-live-streak").textContent  = roomState.streak ?? 0;
-      $("#tv-live-wave").textContent    = roomState.wave ?? 1;
-      $("#tv-live-served").textContent  = roomState.completed ?? 0;
-      $("#tv-live-left").textContent    = roomState.left ?? 0;
+      // In-game: TV is the competition's shared leaderboard display.
+      const ranked = (roomState.players || []).slice().sort(
+        (a, b) => (b.score || 0) - (a.score || 0) || (b.served || 0) - (a.served || 0)
+      );
+      const leader = ranked[0];
+      const totalServed = (roomState.players || []).reduce((n, p) => n + (p.served || 0), 0);
+      const totalLeft   = (roomState.players || []).reduce((n, p) => n + (p.left || 0), 0);
+      const maxWave     = (roomState.players || []).reduce((w, p) => Math.max(w, p.wave || 1), 1);
 
+      $("#tv-live-score").textContent   = leader ? leader.score || 0 : 0;
+      $("#tv-live-code").textContent    = code;
+      $("#tv-live-streak").textContent  = leader ? leader.streak || 0 : 0;
+      $("#tv-live-wave").textContent    = maxWave;
+      $("#tv-live-served").textContent  = totalServed;
+      $("#tv-live-left").textContent    = totalLeft;
+
+      // Mini card per player showing their current guest + progress
       const guestsEl = $("#tv-live-guests");
-      if (roomState.customers.length === 0) {
-        guestsEl.innerHTML = `<p class="empty-note">Waiting for the first guest…</p>`;
+      const activePlayers = ranked.filter((p) => p.customer);
+      if (activePlayers.length === 0) {
+        guestsEl.innerHTML = `<p class="empty-note">Waiting for the first guests…</p>`;
       } else {
         guestsEl.innerHTML = "";
-        for (const c of roomState.customers) {
-          const order = roomState.orders.find((o) => o.id === c.orderId);
-          if (!order) continue;
+        for (const p of activePlayers) {
+          const c = p.customer;
+          const order = p.order;
+          if (!c || !order) continue;
           const status = {
-            waiting_take:  { text: "Waiting for a server",   cls: "waiting" },
-            preparing:     { text: "Kitchen is working",     cls: "preparing" },
-            ready_deliver: { text: "Ready to deliver!",      cls: "ready" },
-            delivered:     { text: "Delivered — thank you!", cls: "delivered" },
-            left:          { text: "Walked out 😞",           cls: "delivered" },
+            waiting_take:  { text: "Taking order",         cls: "waiting" },
+            preparing:     { text: "Cooking & brewing",    cls: "preparing" },
+            ready_deliver: { text: "Ready to deliver!",    cls: "ready" },
+            delivered:     { text: "Delivered 🎉",         cls: "delivered" },
+            left:          { text: "Walked out 😞",         cls: "delivered" },
           }[c.status] || { text: c.status, cls: "" };
 
           const card = document.createElement("div");
@@ -816,7 +813,10 @@
           card.innerHTML = `
             <div class="tv-guest-head">
               <span class="tv-guest-face" aria-hidden="true">${c.vip ? "👑" : ""}${c.face}</span>
-              <span class="tv-guest-name">${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}</span>
+              <span class="tv-guest-name">
+                ${escapeHtml(c.name)}${c.vip ? ' <span class="vip-tag">VIP</span>' : ""}
+                <span class="tv-guest-player">— ${escapeHtml(p.name)}</span>
+              </span>
             </div>
             <div class="tv-guest-order">${order.food.icon} ${escapeHtml(order.food.name)} &nbsp;+&nbsp; ${order.drink.icon} ${escapeHtml(order.drink.name)}</div>
             <div class="tv-guest-prog">
@@ -830,18 +830,20 @@
         }
       }
 
+      // Leaderboard table — medals for the top three.
       const ul = $("#tv-live-players");
       ul.innerHTML = "";
-      roomState.players
-        .slice()
-        .sort((a, b) => (b.served || 0) - (a.served || 0))
-        .forEach((p) => {
-          const li = document.createElement("li");
-          const roleText = p.role ? ` — ${ROLE_LABELS[p.role]}` : "";
-          const servedText = p.served ? ` · served ${p.served}` : "";
-          li.textContent = p.name + roleText + servedText;
-          ul.appendChild(li);
-        });
+      ranked.forEach((p, i) => {
+        const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+        const li = document.createElement("li");
+        li.className = "tv-leader-row" + (i < 3 ? " top" : "");
+        li.innerHTML = `
+          <span class="rank">${medal}</span>
+          <span class="who">${escapeHtml(p.name)}</span>
+          <span class="pts"><b>${p.score || 0}</b> pts · ${p.served || 0} served · 🔥${p.streak || 0}</span>
+        `;
+        ul.appendChild(li);
+      });
     }
   }
 
@@ -864,11 +866,6 @@
       }
     } catch (_) { /* ignore */ }
   })();
-
-  function isCustomerActive(order) {
-    const c = roomState.customers.find((x) => x.id === order.customerId);
-    return c && c.status !== "delivered";
-  }
 
   function escapeHtml(s) {
     return String(s)

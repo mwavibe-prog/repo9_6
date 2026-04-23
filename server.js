@@ -140,18 +140,25 @@ function newRoom(code, hostSocketId) {
     code,
     hostId: hostSocketId,
     started: false,
-    players: new Map(), // socketId -> player
-    customers: [], // at most one active at a time
-    orders: [], // the single in-flight order, if any
-    completed: 0, // number of guests delivered (regardless of tip size)
-    score: 0,     // total points including tips
-    streak: 0,    // consecutive deliveries without a "leave"
-    bestStreak: 0,
-    left: 0,      // guests who walked off
-    wave: 1,
-    waveProgress: 0, // deliveries toward next wave-up (5 per wave)
-    customerCounter: 0,
+    players: new Map(), // socketId -> Player
+    customerCounter: 0, // room-wide monotonic counter for unique customer ids
     orderCounter: 0,
+  };
+}
+
+function newPlayer(id, name) {
+  return {
+    id,
+    name,
+    served: 0,       // guests delivered
+    score: 0,        // total points earned (with tips)
+    streak: 0,       // consecutive deliveries without a "left"
+    bestStreak: 0,
+    left: 0,         // guests who walked off
+    wave: 1,         // personal wave
+    waveProgress: 0, // deliveries toward next wave up
+    customer: null,  // current guest (null before start / between guests)
+    order: null,
   };
 }
 
@@ -163,7 +170,39 @@ function patienceForWave(wave) {
 }
 
 function publicPlayer(p) {
-  return { id: p.id, name: p.name, served: p.served };
+  return {
+    id: p.id,
+    name: p.name,
+    served: p.served,
+    score: p.score,
+    streak: p.streak,
+    bestStreak: p.bestStreak,
+    left: p.left,
+    wave: p.wave,
+    customer: p.customer ? {
+      id: p.customer.id,
+      name: p.customer.name,
+      face: p.customer.face,
+      phrase: p.customer.phrase,
+      vip: p.customer.vip,
+      status: p.customer.status,
+      foodOrder: p.customer.foodOrder,
+      drinkOrder: p.customer.drinkOrder,
+      patienceLeft: Math.max(0, p.customer.expiresAt - Date.now()),
+      patienceMax: p.customer.patienceMax,
+    } : null,
+    order: p.order ? {
+      id: p.order.id,
+      food: p.order.food,
+      foodProgress: p.order.foodProgress,
+      foodDone: p.order.foodDone,
+      ingredientOrder: p.order.ingredientOrder,
+      drink: p.order.drink,
+      drinkProgress: p.order.drinkProgress,
+      drinkDone: p.order.drinkDone,
+      status: p.order.status,
+    } : null,
+  };
 }
 
 function publicState(room) {
@@ -172,39 +211,6 @@ function publicState(room) {
     hostId: room.hostId,
     started: room.started,
     players: [...room.players.values()].map(publicPlayer),
-    customers: room.customers.map((c) => ({
-      id: c.id,
-      name: c.name,
-      face: c.face,
-      phrase: c.phrase,
-      vip: c.vip,
-      orderId: c.orderId,
-      status: c.status, // waiting_take | preparing | ready_deliver | delivered | left
-      foodOrder: c.foodOrder,
-      drinkOrder: c.drinkOrder,
-      patienceLeft: Math.max(0, c.expiresAt - Date.now()),
-      patienceMax: c.patienceMax,
-    })),
-    orders: room.orders.map((o) => ({
-      id: o.id,
-      customerId: o.customerId,
-      food: o.food,
-      foodProgress: o.foodProgress,
-      foodDone: o.foodDone,
-      foodClaimedBy: o.foodClaimedBy,
-      ingredientOrder: o.ingredientOrder,
-      drink: o.drink,
-      drinkProgress: o.drinkProgress,
-      drinkDone: o.drinkDone,
-      drinkClaimedBy: o.drinkClaimedBy,
-      status: o.status, // taken | preparing | ready | delivered
-    })),
-    completed: room.completed,
-    score: room.score,
-    streak: room.streak,
-    bestStreak: room.bestStreak,
-    left: room.left,
-    wave: room.wave,
     menu: MENU,
   };
 }
@@ -218,12 +224,13 @@ function pickRandom(obj) {
   return obj[keys[Math.floor(Math.random() * keys.length)]];
 }
 
-function spawnCustomer(room) {
+// Spawn a new guest for THIS player only (concurrent competitive play:
+// each player has their own queue and races against the others).
+function spawnForPlayer(room, player) {
   if (!room.started) return;
-  // Strictly one guest at a time — the next order only arrives after
-  // the current one has been delivered and cleared.
-  const active = room.customers.filter((c) => c.status !== "delivered" && c.status !== "left");
-  if (active.length >= 1) return;
+  if (player.customer &&
+      player.customer.status !== "delivered" &&
+      player.customer.status !== "left") return;
 
   room.customerCounter += 1;
   room.orderCounter += 1;
@@ -237,117 +244,94 @@ function spawnCustomer(room) {
   const face = CUSTOMER_FACES[Math.floor(Math.random() * CUSTOMER_FACES.length)];
   const phrase = CUSTOMER_PHRASES[Math.floor(Math.random() * CUSTOMER_PHRASES.length)];
 
-  // Distractor layout: each customer gets their own shuffled menu + palette
-  // so tapping isn't just muscle-memory position tapping.
   const foodOrder = shuffled(Object.keys(MENU.foods));
   const drinkOrder = shuffled(Object.keys(MENU.drinks));
   const ingredientOrder = shuffled(Object.keys(MENU.ingredients));
-
-  // 20% chance of a VIP guest who tips double. Little burst of excitement.
   const vip = Math.random() < 0.20;
-  const patienceMax = patienceForWave(room.wave);
+  const patienceMax = patienceForWave(player.wave);
   const arrivedAt = Date.now();
 
-  const customer = {
+  player.customer = {
     id: customerId,
-    name,
-    face,
-    phrase,
-    vip,
-    orderId,
+    name, face, phrase, vip,
     status: "waiting_take",
-    foodOrder,
-    drinkOrder,
-    arrivedAt,
-    patienceMax,
+    foodOrder, drinkOrder,
+    arrivedAt, patienceMax,
     expiresAt: arrivedAt + patienceMax,
   };
-
-  const order = {
+  player.order = {
     id: orderId,
-    customerId,
     food: { id: food.id, name: food.name, icon: food.icon, ingredients: food.ingredients },
-    foodProgress: [], // list of ingredient ids added so far (in order required)
+    foodProgress: [],
     foodDone: false,
-    foodClaimedBy: null,
-    ingredientOrder, // layout of all ingredients in the cook's palette
+    ingredientOrder,
     drink: { id: drink.id, name: drink.name, icon: drink.icon },
-    drinkProgress: { cup: false, drink: false }, // two-step drink
+    drinkProgress: { cup: false, drink: false },
     drinkDone: false,
-    drinkClaimedBy: null,
     status: "waiting_take",
   };
-
-  room.customers.push(customer);
-  room.orders.push(order);
   broadcast(room);
 }
 
 function startSpawning(room) {
-  // Single-threaded game loop: send one guest to start; the next one is
-  // spawned only after a delivery completes (see the deliver handler).
-  spawnCustomer(room);
+  // Give every player their first guest at game start.
+  for (const p of room.players.values()) {
+    spawnForPlayer(room, p);
+  }
 }
 
-function stopSpawning(_room) { /* no-op — kept for the endGame call site */ }
+function stopSpawning(_room) { /* no-op */ }
 
-function findOrder(room, orderId) {
-  return room.orders.find((o) => o.id === orderId);
-}
-function findCustomer(room, customerId) {
-  return room.customers.find((c) => c.id === customerId);
+function refreshStatusForPlayer(player) {
+  if (!player.customer || !player.order) return;
+  const o = player.order, c = player.customer;
+  if (o.status === "delivered" || o.status === "left") return;
+  if (o.foodDone && o.drinkDone) {
+    o.status = "ready";
+    if (c.status !== "delivered" && c.status !== "left") c.status = "ready_deliver";
+  } else {
+    o.status = "preparing";
+    if (c.status !== "delivered" && c.status !== "left") c.status = "preparing";
+  }
 }
 
-// Single ticker checks every room twice a second. If any guest's patience
-// has hit zero, they walk off (streak resets, "left" count goes up, next
-// guest arrives after a short beat).
-function handleLeave(room, customer) {
-  customer.status = "left";
-  const order = findOrder(room, customer.orderId);
-  if (order) order.status = "left";
-  room.streak = 0;
-  room.left += 1;
-  io.to(room.code).emit("guestLeft", { name: customer.name });
+// Walk the guest off this one player's queue — streak resets for them
+// only; other players are unaffected. Next guest arrives after a beat.
+function handleLeaveForPlayer(room, player) {
+  if (!player.customer) return;
+  player.customer.status = "left";
+  if (player.order) player.order.status = "left";
+  player.streak = 0;
+  player.left += 1;
+  io.to(player.id).emit("guestLeft", { name: player.customer.name });
   broadcast(room);
+  const custId = player.customer.id;
   setTimeout(() => {
     const r = rooms.get(room.code);
     if (!r) return;
-    r.customers = r.customers.filter((c) => c.id !== customer.id);
-    r.orders = r.orders.filter((o) => o.customerId !== customer.id);
-    if (r.started) spawnCustomer(r);
+    const p = r.players.get(player.id);
+    if (!p || !p.customer || p.customer.id !== custId) return;
+    p.customer = null;
+    p.order = null;
+    if (r.started) spawnForPlayer(r, p);
     else broadcast(r);
   }, 2500);
 }
 
+// Patience tick — runs for every player in every started room.
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (!room.started) continue;
-    for (const c of room.customers) {
+    for (const p of room.players.values()) {
+      const c = p.customer;
+      if (!c) continue;
       if (c.status === "delivered" || c.status === "left") continue;
-      if (c.status === "ready_deliver") continue; // if the order's ready, don't time out mid-delivery
-      if (now >= c.expiresAt) {
-        handleLeave(room, c);
-        break; // only one active guest at a time anyway
-      }
+      if (c.status === "ready_deliver") continue;
+      if (now >= c.expiresAt) handleLeaveForPlayer(room, p);
     }
   }
 }, 500);
-
-function refreshStatuses(room) {
-  for (const order of room.orders) {
-    if (order.status === "delivered") continue;
-    if (order.foodDone && order.drinkDone) {
-      order.status = "ready";
-      const c = findCustomer(room, order.customerId);
-      if (c && c.status !== "delivered") c.status = "ready_deliver";
-    } else if (order.status === "taken" || order.status === "preparing") {
-      order.status = "preparing";
-      const c = findCustomer(room, order.customerId);
-      if (c && c.status !== "delivered") c.status = "preparing";
-    }
-  }
-}
 
 // ---------- Socket handlers ----------
 io.on("connection", (socket) => {
@@ -357,7 +341,7 @@ io.on("connection", (socket) => {
     const safeName = String(name || "Friend").slice(0, 20).trim() || "Friend";
     const code = uniqueRoomCode();
     const room = newRoom(code, socket.id);
-    room.players.set(socket.id, { id: socket.id, name: safeName, served: 0 });
+    room.players.set(socket.id, newPlayer(socket.id, safeName));
     rooms.set(code, room);
     socket.join(code);
     currentRoomCode = code;
@@ -373,9 +357,12 @@ io.on("connection", (socket) => {
     if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
       return cb && cb({ ok: false, error: "This room is full (15 players)." });
     }
-    room.players.set(socket.id, { id: socket.id, name: safeName, served: 0 });
+    const p = newPlayer(socket.id, safeName);
+    room.players.set(socket.id, p);
     socket.join(roomCode);
     currentRoomCode = roomCode;
+    // If the game is already in progress, let latecomers start playing too.
+    if (room.started) spawnForPlayer(room, p);
     cb && cb({ ok: true, code: roomCode });
     broadcast(room);
   });
@@ -396,119 +383,87 @@ io.on("connection", (socket) => {
     if (socket.id !== room.hostId) return;
     stopSpawning(room);
     room.started = false;
-    io.to(room.code).emit("gameOver", {
-      completed: room.completed,
-      score: room.score,
-      bestStreak: room.bestStreak,
-      left: room.left,
-      wave: room.wave,
-      players: [...room.players.values()].map(publicPlayer),
-    });
-    // Reset game state but keep players for a possible next round
-    room.customers = [];
-    room.orders = [];
-    room.completed = 0;
-    room.score = 0;
-    room.streak = 0;
-    room.bestStreak = 0;
-    room.left = 0;
-    room.wave = 1;
-    room.waveProgress = 0;
-    for (const p of room.players.values()) p.served = 0;
+    const standings = [...room.players.values()].map(publicPlayer)
+      .sort((a, b) => (b.score || 0) - (a.score || 0) || (b.served || 0) - (a.served || 0));
+    io.to(room.code).emit("gameOver", { standings });
+    // Reset each player's stats but keep them in the lobby for the next round
+    for (const p of room.players.values()) {
+      p.served = 0;
+      p.score = 0;
+      p.streak = 0;
+      p.bestStreak = 0;
+      p.left = 0;
+      p.wave = 1;
+      p.waveProgress = 0;
+      p.customer = null;
+      p.order = null;
+    }
     broadcast(room);
   });
 
-  // Order Taker: write down the customer's order by picking from the menu.
-  // The server checks the picks match the customer's request. If they
-  // don't, it sends a gentle hint back and leaves the customer waiting.
-  socket.on("submitOrder", ({ customerId, foodId, drinkId }) => {
+  // Each action operates on THIS player's own customer/order — competitive
+  // mode means everyone has their own race going.
+
+  socket.on("submitOrder", ({ foodId, drinkId }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
-    const customer = findCustomer(room, customerId);
-    if (!customer || customer.status !== "waiting_take") return;
-    const order = findOrder(room, customer.orderId);
-    if (!order) return;
+    const player = room.players.get(socket.id);
+    if (!player || !player.customer || !player.order) return;
+    if (player.customer.status !== "waiting_take") return;
 
-    const foodOk = foodId === order.food.id;
-    const drinkOk = drinkId === order.drink.id;
+    const foodOk = foodId === player.order.food.id;
+    const drinkOk = drinkId === player.order.drink.id;
     if (!foodOk || !drinkOk) {
       io.to(socket.id).emit("hint", {
         kind: "wrong_order",
-        customerName: customer.name,
-        wantFood: order.food.name,
-        wantDrink: order.drink.name,
+        customerName: player.customer.name,
+        wantFood: player.order.food.name,
+        wantDrink: player.order.drink.name,
         badFood: !foodOk,
         badDrink: !drinkOk,
       });
       return;
     }
 
-    customer.status = "preparing";
-    order.status = "preparing";
+    player.customer.status = "preparing";
+    player.order.status = "preparing";
+    refreshStatusForPlayer(player);
+    broadcast(room);
+  });
+
+  socket.on("addIngredient", ({ ingredient }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room || !room.started) return;
     const player = room.players.get(socket.id);
-    if (player) player.took = (player.took || 0) + 1;
-    refreshStatuses(room);
-    broadcast(room);
-  });
-
-  // Cook claims a food ticket (optional, helps coordination but not required)
-  socket.on("claimFood", ({ orderId }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room || !room.started) return;
-    const order = findOrder(room, orderId);
-    if (!order || order.foodDone) return;
-    order.foodClaimedBy = socket.id;
-    broadcast(room);
-  });
-
-  // Cook adds an ingredient. Must be the next ingredient in the recipe order.
-  socket.on("addIngredient", ({ orderId, ingredient }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room || !room.started) return;
-    const order = findOrder(room, orderId);
-    if (!order || order.foodDone) return;
-    const next = order.food.ingredients[order.foodProgress.length];
+    if (!player || !player.order || player.order.foodDone) return;
+    const next = player.order.food.ingredients[player.order.foodProgress.length];
     if (next !== ingredient) {
-      // Gentle: just tell this one player "not yet", don't penalize
       io.to(socket.id).emit("hint", { kind: "wrong_ingredient", expected: next });
       return;
     }
-    order.foodProgress.push(ingredient);
-    if (order.foodProgress.length === order.food.ingredients.length) {
-      order.foodDone = true;
+    player.order.foodProgress.push(ingredient);
+    if (player.order.foodProgress.length === player.order.food.ingredients.length) {
+      player.order.foodDone = true;
     }
-    refreshStatuses(room);
+    refreshStatusForPlayer(player);
     broadcast(room);
   });
 
-  // Cook can undo their last step (reduces frustration for elderly players)
-  socket.on("undoIngredient", ({ orderId }) => {
+  socket.on("undoIngredient", () => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
-    const order = findOrder(room, orderId);
-    if (!order || order.foodDone) return;
-    order.foodProgress.pop();
+    const player = room.players.get(socket.id);
+    if (!player || !player.order || player.order.foodDone) return;
+    player.order.foodProgress.pop();
     broadcast(room);
   });
 
-  // Barista claims a drink ticket
-  socket.on("claimDrink", ({ orderId }) => {
+  socket.on("drinkStep", ({ step, drinkId }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
-    const order = findOrder(room, orderId);
-    if (!order || order.drinkDone) return;
-    order.drinkClaimedBy = socket.id;
-    broadcast(room);
-  });
-
-  // Barista: add cup, then pour drink. The "pour" step now includes a
-  // drinkId and must match the order, so distractor drink buttons can't
-  // be tapped blindly.
-  socket.on("drinkStep", ({ orderId, step, drinkId }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room || !room.started) return;
-    const order = findOrder(room, orderId);
-    if (!order || order.drinkDone) return;
+    const player = room.players.get(socket.id);
+    if (!player || !player.order || player.order.drinkDone) return;
+    const order = player.order;
 
     if (step === "cup" && !order.drinkProgress.cup) {
       order.drinkProgress.cup = true;
@@ -528,19 +483,20 @@ io.on("connection", (socket) => {
     if (order.drinkProgress.cup && order.drinkProgress.drink) {
       order.drinkDone = true;
     }
-    refreshStatuses(room);
+    refreshStatusForPlayer(player);
     broadcast(room);
   });
 
-  // Order Taker delivers a ready order. Computes a speed-based tip and
-  // updates streak/wave state on the room.
-  socket.on("deliver", ({ customerId }) => {
+  // Deliver this player's ready order. Tip + streak + wave are all
+  // per-player so players compete for the top of the leaderboard.
+  socket.on("deliver", () => {
     const room = rooms.get(currentRoomCode);
     if (!room || !room.started) return;
-    const customer = findCustomer(room, customerId);
-    if (!customer || customer.status !== "ready_deliver") return;
-    const order = findOrder(room, customer.orderId);
-    if (!order) return;
+    const player = room.players.get(socket.id);
+    if (!player || !player.customer || player.customer.status !== "ready_deliver") return;
+
+    const customer = player.customer;
+    const order = player.order;
 
     // Speed tip: deliver with ≥50% patience left = 3 pts, ≥20% = 2 pts,
     // anything above zero = 1 pt. VIP guests (crown) tip double.
@@ -552,47 +508,36 @@ io.on("connection", (socket) => {
     if (customer.vip) tip *= 2;
 
     customer.status = "delivered";
-    order.status = "delivered";
-    room.completed += 1;
-    room.score += tip;
-    room.streak += 1;
-    if (room.streak > room.bestStreak) room.bestStreak = room.streak;
-    room.waveProgress += 1;
+    if (order) order.status = "delivered";
+    player.served += 1;
+    player.score += tip;
+    player.streak += 1;
+    if (player.streak > player.bestStreak) player.bestStreak = player.streak;
+    player.waveProgress += 1;
 
-    // Let everyone see the earned tip popup
-    io.to(room.code).emit("tipEarned", {
-      tip,
-      vip: !!customer.vip,
-      streak: room.streak,
-      name: customer.name,
+    // Per-player pops so only the player who scored sees "+3 tip!"
+    io.to(socket.id).emit("tipEarned", {
+      tip, vip: !!customer.vip, streak: player.streak, name: customer.name,
     });
-
-    // Streak milestones
-    if ([3, 5, 10, 15, 20].includes(room.streak)) {
-      io.to(room.code).emit("streakMilestone", { streak: room.streak });
+    if ([3, 5, 10, 15, 20].includes(player.streak)) {
+      io.to(socket.id).emit("streakMilestone", { streak: player.streak });
+    }
+    if (player.waveProgress >= 5) {
+      player.wave += 1;
+      player.waveProgress = 0;
+      io.to(socket.id).emit("waveUp", { wave: player.wave });
     }
 
-    // Wave up every 5 deliveries — patience tightens for the next guests.
-    if (room.waveProgress >= 5) {
-      room.wave += 1;
-      room.waveProgress = 0;
-      io.to(room.code).emit("waveUp", { wave: room.wave });
-    }
-
-    const player = room.players.get(socket.id);
-    if (player) player.served = (player.served || 0) + 1;
-
-    // Short "thank you" pause, then clear + spawn next guest
+    const custId = customer.id;
     setTimeout(() => {
       const r = rooms.get(currentRoomCode);
       if (!r) return;
-      r.customers = r.customers.filter((c) => c.id !== customer.id);
-      r.orders = r.orders.filter((o) => o.id !== order.id);
-      if (r.started) {
-        spawnCustomer(r);
-      } else {
-        broadcast(r);
-      }
+      const p = r.players.get(socket.id);
+      if (!p || !p.customer || p.customer.id !== custId) return;
+      p.customer = null;
+      p.order = null;
+      if (r.started) spawnForPlayer(r, p);
+      else broadcast(r);
     }, 2000);
     broadcast(room);
   });

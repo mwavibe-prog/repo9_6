@@ -1310,6 +1310,89 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+/* ---------- Mini leaderboard on the game screen ---------- */
+.leaderboard-mini-wrap {
+  max-width: 1100px;
+  margin: 10px auto 0;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 8px 14px;
+}
+.leaderboard-mini-wrap summary {
+  font-weight: 800;
+  font-size: 1.05rem;
+  cursor: pointer;
+  padding: 6px 0;
+  list-style: none;
+}
+.leaderboard-mini-wrap summary::-webkit-details-marker { display: none; }
+.leaderboard-mini {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 4px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+@media (min-width: 720px) {
+  .leaderboard-mini { grid-template-columns: 1fr 1fr; }
+}
+.leaderboard-mini li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--chip);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  font-size: 1rem;
+}
+.leaderboard-mini li.me {
+  background: #eaf2ff;
+  border-color: var(--primary);
+  font-weight: 700;
+}
+.leaderboard-mini .rank { font-size: 1.15rem; line-height: 1; }
+.leaderboard-mini .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leaderboard-mini .pts { color: var(--muted); font-size: 0.9rem; }
+.leaderboard-mini .pts b { color: var(--accent); }
+
+/* ---------- TV leaderboard rows ---------- */
+.tv-leader-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: clamp(0.9rem, 1.5vw, 1.15rem);
+}
+.tv-leader-row .rank { font-size: clamp(1rem, 2vw, 1.4rem); line-height: 1; min-width: 2ch; }
+.tv-leader-row .pts  { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.tv-leader-row .pts b { color: var(--accent); font-size: 1.15em; margin-right: 4px; }
+.tv-leader-row.top {
+  background: linear-gradient(180deg, #fff8d2 0%, #ffe28a 100%);
+  border: 2px solid #d4a800;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+.tv-guest-player {
+  color: var(--muted);
+  font-size: 0.9em;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+/* Highlight "me" in the final-standings list */
+#over-players li.me {
+  background: #eaf2ff;
+  border-color: var(--primary);
+  font-weight: 700;
+}
+
 /* Reduce motion preference */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
